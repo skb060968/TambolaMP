@@ -1,0 +1,28 @@
+{
+  "name": "tambola-mp",
+  "version": "1.0.0",
+  "description": "Tambola MP — TV + phones party version of Tambola. Big screen runs the caller, phones hold the tickets.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "firebase": "^12.9.0"
+  },
+  "devDependencies": {
+    "vite": "^7.3.1"
+  },
+  "keywords": [
+    "tambola",
+    "housie",
+    "bingo",
+    "party",
+    "tv",
+    "multiplayer",
+    "firebase",
+    "pwa"
+  ],
+  "license": "MIT"
+}

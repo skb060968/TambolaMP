@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Tambola MP</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="description" content="Tambola MP — TV + phones party Tambola for friends in one room." />
+    <meta name="theme-color" content="#8b4513" />
+    <link rel="manifest" href="/manifest.json" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png" />
+    <link rel="icon" type="image/png" sizes="512x512" href="/icons/icon-512.png" />
+    <link rel="apple-touch-icon" href="/icons/icon-192.png" />
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <!-- ===================== HOME ===================== -->
+    <section id="home" class="screen home-screen" aria-label="Tambola MP home">
+      <header class="home-header">
+        <h1 class="home-title">🎫 Tambola MP</h1>
+        <p class="home-subtitle">TV + phones party Tambola</p>
+      </header>
+      <div class="home-buttons">
+        <button id="btn-home-tv" class="btn primary big" type="button">📺 Play on TV<br><span class="sub">(Host this room)</span></button>
+        <button id="btn-home-player" class="btn secondary big" type="button">📱 Join as Player</button>
+      </div>
+      <p class="home-hint">Open the URL on a TV to host the caller. Players join from their phones.</p>
+    </section>
+
+    <!-- ===================== TV CREATE ===================== -->
+    <section id="tv-create" class="screen tv-create-screen" hidden aria-label="Create TV room">
+      <h2 class="setup-heading">Host on TV</h2>
+      <div class="setup-group">
+        <input id="tv-create-name" class="text-input" type="text" maxlength="14" placeholder="Host name" autocomplete="off" />
+      </div>
+      <div class="setup-group">
+        <label class="setup-label">Pick an avatar</label>
+        <div class="emoji-picker tv-emoji-picker" role="group">
+          <button class="emoji-btn selected" type="button" data-emoji="📺">📺</button>
+          <button class="emoji-btn" type="button" data-emoji="🎤">🎤</button>
+          <button class="emoji-btn" type="button" data-emoji="🎲">🎲</button>
+          <button class="emoji-btn" type="button" data-emoji="🎪">🎪</button>
+          <button class="emoji-btn" type="button" data-emoji="🪩">🪩</button>
+          <button class="emoji-btn" type="button" data-emoji="🌟">🌟</button>
+        </div>
+      </div>
+      <button id="btn-tv-create-submit" class="btn primary" type="button">Create Room</button>
+      <button id="btn-tv-create-back" class="btn secondary back-btn" type="button">← Back</button>
+    </section>
+
+    <!-- ===================== TV LOBBY ===================== -->
+    <section id="tv-lobby" class="screen tv-lobby-screen" hidden aria-label="TV lobby">
+      <header class="tv-lobby-header">
+        <h1 class="tv-title">Tambola MP</h1>
+        <button id="btn-tv-mute" class="icon-btn" type="button" title="Mute">🔊</button>
+      </header>
+      <div class="tv-lobby-body">
+        <div class="tv-lobby-left">
+          <p class="tv-room-label">Room Code</p>
+          <p id="tv-lobby-code" class="tv-room-code">----</p>
+          <div id="tv-lobby-qr" class="tv-lobby-qr"></div>
+          <p class="tv-room-hint">Players: scan or enter code in their phone browser.</p>
+        </div>
+        <div class="tv-lobby-right">
+          <h2 class="tv-players-heading">Players <span id="tv-lobby-count" class="tv-players-count">0 / 20</span></h2>
+          <ul id="tv-lobby-players" class="tv-lobby-players"></ul>
+          <div class="tv-lobby-actions">
+            <button id="btn-tv-start-round" class="btn primary big" type="button" disabled>▶ Start Round</button>
+            <button id="btn-tv-lobby-close" class="btn secondary" type="button">Close Room</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== TV GAME ===================== -->
+    <section id="tv-game" class="screen tv-game-screen" hidden aria-label="TV game">
+      <header class="tv-game-header">
+        <h1 class="tv-title-small">Tambola MP</h1>
+        <div class="tv-controls">
+          <button id="btn-tv-next" class="btn primary" type="button">Next Number</button>
+          <button id="btn-tv-auto" class="btn secondary" type="button">▶ Auto Call</button>
+          <select id="tv-auto-speed" class="speed-select">
+            <option value="3">3s</option>
+            <option value="5" selected>5s</option>
+            <option value="8">8s</option>
+          </select>
+          <button id="btn-tv-game-mute" class="icon-btn" type="button" title="Mute">🔊</button>
+          <button id="btn-tv-end" class="btn-end" type="button" title="End Round">✕ End</button>
+        </div>
+      </header>
+      <div class="tv-game-body">
+        <div class="tv-caller">
+          <div id="tv-caller-ball" class="tv-caller-ball" role="img" aria-label="Current called number">
+            <span id="tv-current-number" class="tv-current-number">—</span>
+          </div>
+          <div class="tv-last-five-wrap">
+            <p class="tv-last-label">Last 5</p>
+            <div id="tv-last-five" class="tv-last-five"><span class="empty">—</span></div>
+          </div>
+        </div>
+        <div id="tv-called-grid" class="tv-called-grid"></div>
+      </div>
+      <div id="tv-mini-tickets" class="tv-mini-tickets"></div>
+      <div id="tv-winner-banner" class="tv-winner-banner"></div>
+    </section>
+
+    <!-- ===================== TV RESULTS ===================== -->
+    <section id="tv-results" class="screen tv-results-screen" hidden aria-label="TV results">
+      <header class="tv-results-header">
+        <h1 class="tv-results-title">🏆 Round Over</h1>
+      </header>
+      <ul id="tv-results-list" class="tv-results-list"></ul>
+      <div class="tv-results-actions">
+        <button id="btn-tv-play-again" class="btn primary big" type="button">▶ Play Again</button>
+        <button id="btn-tv-close-room" class="btn secondary" type="button">Close Room</button>
+      </div>
+    </section>
+
+    <!-- ===================== PHONE JOIN ===================== -->
+    <section id="phone-join" class="screen phone-join-screen" hidden aria-label="Join room">
+      <h2 class="setup-heading">Join Room</h2>
+      <div class="setup-group">
+        <input id="phone-join-code" class="text-input" type="text" maxlength="4" placeholder="Room Code" autocomplete="off" style="text-transform: uppercase;" />
+      </div>
+      <div class="setup-group">
+        <input id="phone-join-name" class="text-input" type="text" maxlength="14" placeholder="Your Name" autocomplete="off" />
+      </div>
+      <div class="setup-group">
+        <label class="setup-label">Pick an avatar</label>
+        <div class="emoji-picker phone-emoji-picker" role="group">
+          <button class="emoji-btn selected" type="button" data-emoji="👲">👲</button>
+          <button class="emoji-btn" type="button" data-emoji="🧑‍💼">🧑‍💼</button>
+          <button class="emoji-btn" type="button" data-emoji="👩‍💼">👩‍💼</button>
+          <button class="emoji-btn" type="button" data-emoji="🥷">🥷</button>
+          <button class="emoji-btn" type="button" data-emoji="🧙">🧙</button>
+          <button class="emoji-btn" type="button" data-emoji="🧝‍♀️">🧝‍♀️</button>
+        </div>
+      </div>
+      <button id="btn-phone-join-submit" class="btn primary" type="button">Join</button>
+      <button id="btn-phone-join-back" class="btn secondary back-btn" type="button">← Back</button>
+    </section>
+
+    <!-- ===================== PHONE LOBBY ===================== -->
+    <section id="phone-lobby" class="screen phone-lobby-screen" hidden aria-label="Phone lobby">
+      <header class="phone-lobby-header">
+        <h2 class="phone-lobby-title">Lobby</h2>
+        <button id="btn-phone-lobby-mute" class="icon-btn" type="button" title="Mute">🔊</button>
+      </header>
+      <p class="phone-room-code-display">Room: <span id="phone-lobby-code">----</span></p>
+      <p class="phone-players-heading">Players <span id="phone-lobby-count" class="phone-players-count">0 / 20</span></p>
+      <ul id="phone-lobby-players" class="phone-lobby-players"></ul>
+      <p class="phone-waiting">Waiting for host to start round…</p>
+      <button id="btn-phone-leave-lobby" class="btn secondary back-btn" type="button">← Leave</button>
+    </section>
+
+    <!-- ===================== PHONE GAME ===================== -->
+    <section id="phone-game" class="screen phone-game-screen" hidden aria-label="Phone game">
+      <header class="phone-game-header">
+        <div class="phone-called">
+          <span class="phone-called-label">Called</span>
+          <span id="phone-called-badge" class="phone-called-badge">—</span>
+        </div>
+        <div class="phone-last-three-wrap">
+          <span class="phone-last-label">Last 3</span>
+          <span id="phone-last-three" class="phone-last-three"><span class="empty">—</span></span>
+        </div>
+        <button id="btn-phone-game-mute" class="icon-btn" type="button" title="Mute">🔊</button>
+      </header>
+
+      <div id="phone-ticket-grid" class="phone-ticket-grid" aria-label="Your ticket"></div>
+
+      <div class="phone-claim-row" aria-label="Claim winning patterns">
+        <button class="btn claim-btn" type="button" data-pattern="topLine">Top</button>
+        <button class="btn claim-btn" type="button" data-pattern="middleLine">Middle</button>
+        <button class="btn claim-btn" type="button" data-pattern="bottomLine">Bottom</button>
+        <button class="btn claim-btn" type="button" data-pattern="corners">Corners</button>
+        <button class="btn claim-btn" type="button" data-pattern="fullHouse">Full House</button>
+      </div>
+
+      <div class="phone-bottom-row">
+        <label class="toggle-label">
+          <input id="phone-autocut" type="checkbox" />
+          Auto-cut
+        </label>
+      </div>
+
+      <div id="phone-winner-banner" class="phone-winner-banner"></div>
+    </section>
+
+    <!-- ===================== PHONE RESULTS ===================== -->
+    <section id="phone-results" class="screen phone-results-screen" hidden aria-label="Phone results">
+      <header class="phone-results-header">
+        <h2 class="phone-results-title">🏆 Round Over</h2>
+      </header>
+      <ul id="phone-results-list" class="phone-results-list"></ul>
+      <div class="phone-results-actions">
+        <button id="btn-phone-play-again" class="btn primary" type="button">▶ Play Again</button>
+        <button id="btn-phone-home" class="btn secondary" type="button">Home</button>
+      </div>
+    </section>
+
+    <!-- Update toast -->
+    <div id="update-toast" class="update-toast" hidden>
+      <span>A new version is available.</span>
+      <button id="update-refresh-btn" type="button">Update</button>
+    </div>
+
+    <!-- Confetti library -->
+    <script
+      src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.3/dist/confetti.browser.min.js"
+      async
+      onerror="
+        var s=document.createElement('script');
+        s.src='https://unpkg.com/canvas-confetti@1.9.3/dist/confetti.browser.min.js';
+        s.async=true;
+        document.head.appendChild(s);
+      "
+    ></script>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
