@@ -171,6 +171,7 @@ function attachRoomListener() {
     onPlayersChange: (players) => {
       firebaseSnapshot.players = players;
       renderPhoneLobby();
+      renderPhonePlayerTag();
       // If our slot disappeared (host kicked us / left), go home.
       const myKey = `player_${playerIndex}`;
       if (firebaseSnapshot.meta?.status !== 'ended' && players && Object.keys(players).length > 0 && !players[myKey]) {
@@ -184,6 +185,7 @@ function attachRoomListener() {
       if (tickets && tickets[myKey]) {
         myTicket = deserializeTicket(tickets[myKey]);
         renderPhoneTicket();
+        renderPhonePlayerTag();
         if (firebaseSnapshot.meta?.status === 'active') {
           showScreen('phone-game');
         }
@@ -282,6 +284,16 @@ function renderPhoneLobby() {
   });
   const countEl = document.getElementById('phone-lobby-count');
   if (countEl) countEl.textContent = `${keys.length} / ${MAX_PLAYERS}`;
+}
+
+function renderPhonePlayerTag() {
+  if (playerIndex == null) return;
+  const me = (firebaseSnapshot.players || {})[`player_${playerIndex}`];
+  if (!me) return;
+  const emojiEl = document.getElementById('phone-player-emoji');
+  const nameEl = document.getElementById('phone-player-name');
+  if (emojiEl) emojiEl.textContent = me.emoji || '😀';
+  if (nameEl) nameEl.textContent = me.name || 'Player';
 }
 
 /* ======= GAME ======= */

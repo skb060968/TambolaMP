@@ -36,7 +36,6 @@ import {
   initAudio, playSound, speakNumber, isMuted, toggleMute,
 } from './sound-manager.js';
 import { showScreen, showToast, confirmModal } from './platform-ui.js';
-import { generateQrSvg } from './qr.js';
 import { db } from './firebase-config.js';
 import { ref, get } from 'firebase/database';
 
@@ -114,23 +113,12 @@ function wireTvCreate() {
 
   const submit = document.getElementById('btn-tv-create-submit');
   const back = document.getElementById('btn-tv-create-back');
-  const emojiPicker = document.querySelector('.tv-emoji-picker');
-
-  if (emojiPicker) {
-    emojiPicker.querySelectorAll('.emoji-btn').forEach((b) => {
-      b.addEventListener('click', () => {
-        emojiPicker.querySelectorAll('.emoji-btn').forEach((x) => x.classList.remove('selected'));
-        b.classList.add('selected');
-      });
-    });
-  }
 
   if (submit) submit.addEventListener('click', async () => {
-    const name = document.getElementById('tv-create-name')?.value.trim() || 'Host';
-    const sel = document.querySelector('.tv-emoji-picker .emoji-btn.selected');
-    const emoji = sel?.dataset.emoji || '📺';
+    // TV-host has no name/avatar — it's the display, not a player.
+    // Pass placeholder values to keep firebase-sync signature stable.
     try {
-      const result = await createRoomAsTv(name, emoji);
+      const result = await createRoomAsTv('TV', '📺');
       roomCode = result.roomCode;
       saveSession();
       setupTvDisconnectHandler(roomCode);
@@ -200,16 +188,6 @@ function attachRoomListener() {
 function setupLobbyUi() {
   const codeEl = document.getElementById('tv-lobby-code');
   if (codeEl) codeEl.textContent = roomCode;
-  const qrEl = document.getElementById('tv-lobby-qr');
-  if (qrEl) {
-    try {
-      const url = `${location.origin}/?code=${roomCode}&action=join`.toUpperCase();
-      // Note: QR encoder is alphanumeric only. The URL must uppercase.
-      qrEl.innerHTML = generateQrSvg(url, 220);
-    } catch (e) {
-      qrEl.textContent = roomCode;
-    }
-  }
   renderLobbyUi();
 }
 
@@ -429,7 +407,6 @@ function renderCalledGrid() {
 function renderMiniTickets() {
   const strip = document.getElementById('tv-mini-tickets');
   if (!strip || !state) return;
-  strip.className = `tv-mini-tickets count-${state.tickets.length <= 10 ? 'few' : 'many'}`;
   strip.innerHTML = '';
   const marks = firebaseSnapshot.marks || {};
   state.tickets.forEach((ticket, idx) => {
@@ -468,9 +445,15 @@ function renderMiniTickets() {
 function animateBall(number) {
   const ball = document.getElementById('tv-caller-ball');
   if (!ball) return;
-  ball.classList.remove('pop');
+  // Two-phase: spinning (drop+bounce, hides number), then settled (number reveal).
+  ball.classList.remove('spinning', 'settled');
   void ball.offsetWidth;
-  ball.classList.add('pop');
+  ball.classList.add('spinning');
+  setTimeout(() => {
+    ball.classList.remove('spinning');
+    void ball.offsetWidth;
+    ball.classList.add('settled');
+  }, 700);
 }
 
 /* ======= CLAIMS ======= */

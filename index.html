@@ -14,59 +14,41 @@
   </head>
   <body>
     <!-- ===================== HOME ===================== -->
-    <section id="home" class="screen home-screen" aria-label="Tambola MP home">
+    <section id="home" class="screen home-screen" aria-label="Tambola Multiplayer home">
       <header class="home-header">
-        <h1 class="home-title">🎫 Tambola MP</h1>
-        <p class="home-subtitle">TV + phones party Tambola</p>
+        <h1 class="home-title">TAMBOLA MULTIPLAYER</h1>
       </header>
       <div class="home-buttons">
-        <button id="btn-home-tv" class="btn primary big" type="button">📺 Play on TV<br><span class="sub">(Host this room)</span></button>
+        <button id="btn-home-tv" class="btn primary big" type="button">HOST</button>
         <button id="btn-home-player" class="btn secondary big" type="button">📱 Join as Player</button>
       </div>
-      <p class="home-hint">Open the URL on a TV to host the caller. Players join from their phones.</p>
     </section>
 
     <!-- ===================== TV CREATE ===================== -->
     <section id="tv-create" class="screen tv-create-screen" hidden aria-label="Create TV room">
       <h2 class="setup-heading">Host on TV</h2>
-      <div class="setup-group">
-        <input id="tv-create-name" class="text-input" type="text" maxlength="14" placeholder="Host name" autocomplete="off" />
-      </div>
-      <div class="setup-group">
-        <label class="setup-label">Pick an avatar</label>
-        <div class="emoji-picker tv-emoji-picker" role="group">
-          <button class="emoji-btn selected" type="button" data-emoji="📺">📺</button>
-          <button class="emoji-btn" type="button" data-emoji="🎤">🎤</button>
-          <button class="emoji-btn" type="button" data-emoji="🎲">🎲</button>
-          <button class="emoji-btn" type="button" data-emoji="🎪">🎪</button>
-          <button class="emoji-btn" type="button" data-emoji="🪩">🪩</button>
-          <button class="emoji-btn" type="button" data-emoji="🌟">🌟</button>
-        </div>
-      </div>
-      <button id="btn-tv-create-submit" class="btn primary" type="button">Create Room</button>
+      <button id="btn-tv-create-submit" class="btn primary big" type="button">Create Room</button>
       <button id="btn-tv-create-back" class="btn secondary back-btn" type="button">← Back</button>
     </section>
 
     <!-- ===================== TV LOBBY ===================== -->
     <section id="tv-lobby" class="screen tv-lobby-screen" hidden aria-label="TV lobby">
       <header class="tv-lobby-header">
-        <h1 class="tv-title">Tambola MP</h1>
+        <h1 class="tv-title">TAMBOLA MULTIPLAYER</h1>
         <button id="btn-tv-mute" class="icon-btn" type="button" title="Mute">🔊</button>
       </header>
       <div class="tv-lobby-body">
         <div class="tv-lobby-left">
           <p class="tv-room-label">Room Code</p>
           <p id="tv-lobby-code" class="tv-room-code">----</p>
-          <div id="tv-lobby-qr" class="tv-lobby-qr"></div>
-          <p class="tv-room-hint">Players: scan or enter code in their phone browser.</p>
-        </div>
-        <div class="tv-lobby-right">
-          <h2 class="tv-players-heading">Players <span id="tv-lobby-count" class="tv-players-count">0 / 20</span></h2>
-          <ul id="tv-lobby-players" class="tv-lobby-players"></ul>
           <div class="tv-lobby-actions">
             <button id="btn-tv-start-round" class="btn primary big" type="button" disabled>▶ Start Round</button>
             <button id="btn-tv-lobby-close" class="btn secondary" type="button">Close Room</button>
           </div>
+        </div>
+        <div class="tv-lobby-right">
+          <h2 class="tv-players-heading">Players <span id="tv-lobby-count" class="tv-players-count">0 / 20</span></h2>
+          <ul id="tv-lobby-players" class="tv-lobby-players"></ul>
         </div>
       </div>
     </section>
@@ -74,7 +56,7 @@
     <!-- ===================== TV GAME ===================== -->
     <section id="tv-game" class="screen tv-game-screen" hidden aria-label="TV game">
       <header class="tv-game-header">
-        <h1 class="tv-title-small">Tambola MP</h1>
+        <h1 class="tv-title">TAMBOLA MULTIPLAYER</h1>
         <div class="tv-controls">
           <button id="btn-tv-next" class="btn primary" type="button">Next Number</button>
           <button id="btn-tv-auto" class="btn secondary" type="button">▶ Auto Call</button>
@@ -89,17 +71,17 @@
       </header>
       <div class="tv-game-body">
         <div class="tv-caller">
-          <div id="tv-caller-ball" class="tv-caller-ball" role="img" aria-label="Current called number">
-            <span id="tv-current-number" class="tv-current-number">—</span>
+          <div id="tv-caller-ball" class="tv-caller-ball ball-sphere" role="img" aria-label="Current called number">
+            <span id="tv-current-number" class="tv-current-number ball-number">—</span>
           </div>
           <div class="tv-last-five-wrap">
             <p class="tv-last-label">Last 5</p>
             <div id="tv-last-five" class="tv-last-five"><span class="empty">—</span></div>
           </div>
         </div>
-        <div id="tv-called-grid" class="tv-called-grid"></div>
+        <div id="tv-mini-tickets" class="tv-mini-tickets"></div>
       </div>
-      <div id="tv-mini-tickets" class="tv-mini-tickets"></div>
+      <div id="tv-called-grid" class="tv-called-grid"></div>
       <div id="tv-winner-banner" class="tv-winner-banner"></div>
     </section>
 
@@ -154,6 +136,11 @@
 
     <!-- ===================== PHONE GAME ===================== -->
     <section id="phone-game" class="screen phone-game-screen" hidden aria-label="Phone game">
+      <div class="phone-player-tag">
+        <span id="phone-player-emoji" class="phone-player-emoji">😀</span>
+        <span id="phone-player-name" class="phone-player-name">Player</span>
+      </div>
+
       <header class="phone-game-header">
         <div class="phone-called">
           <span class="phone-called-label">Called</span>
@@ -163,7 +150,6 @@
           <span class="phone-last-label">Last 3</span>
           <span id="phone-last-three" class="phone-last-three"><span class="empty">—</span></span>
         </div>
-        <button id="btn-phone-game-mute" class="icon-btn" type="button" title="Mute">🔊</button>
       </header>
 
       <div id="phone-ticket-grid" class="phone-ticket-grid" aria-label="Your ticket"></div>
@@ -181,6 +167,7 @@
           <input id="phone-autocut" type="checkbox" />
           Auto-cut
         </label>
+        <button id="btn-phone-game-mute" class="icon-btn" type="button" title="Mute">🔊</button>
       </div>
 
       <div id="phone-winner-banner" class="phone-winner-banner"></div>
