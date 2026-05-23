@@ -169,10 +169,8 @@ function attachRoomListener() {
     },
     onMarksChange: (marks) => {
       firebaseSnapshot.marks = marks;
-      // Re-render mini-tickets with updated strikes
-      if (firebaseSnapshot.meta?.status === 'active') {
-        renderMiniTickets();
-      }
+      // Marks no longer rendered on TV (mini-tickets removed) — host
+      // still uses them when validating claims via firebaseSnapshot.marks.
     },
     onClaimRequests: (requests) => {
       firebaseSnapshot.claimRequests = requests;
@@ -274,7 +272,6 @@ async function startRound() {
 function setupGameUi() {
   renderCallerUi();
   renderCalledGrid();
-  renderMiniTickets();
   // Reset banner area
   const banner = document.getElementById('tv-winner-banner');
   if (banner) banner.classList.remove('show');
@@ -335,7 +332,6 @@ async function doDraw() {
   animateBall(result.number);
   renderCallerUi();
   renderCalledGrid();
-  renderMiniTickets();
 }
 
 function toggleAutoCall() {
@@ -370,17 +366,11 @@ function stopAutoCall() {
 /* ======= RENDER ======= */
 function renderCallerUi() {
   const numEl = document.getElementById('tv-current-number');
-  if (numEl) {
-    if (state && state.drawnNumbers.length > 0) {
-      numEl.textContent = state.drawnNumbers[state.drawnNumbers.length - 1];
-    } else {
-      numEl.textContent = '—';
-    }
-  }
-  const lastEl = document.getElementById('tv-last-five');
-  if (lastEl && state) {
-    const last5 = state.drawnNumbers.slice(-6, -1).reverse();
-    lastEl.innerHTML = last5.length === 0 ? '<span class="empty">—</span>' : last5.map((n) => `<span class="last-num">${n}</span>`).join('');
+  if (!numEl) return;
+  if (state && state.drawnNumbers.length > 0) {
+    numEl.textContent = state.drawnNumbers[state.drawnNumbers.length - 1];
+  } else {
+    numEl.textContent = '—';
   }
 }
 
@@ -401,44 +391,6 @@ function renderCalledGrid() {
     const n = parseInt(c.dataset.num, 10);
     c.classList.toggle('called', drawnSet.has(n));
     c.classList.toggle('latest', n === latest);
-  });
-}
-
-function renderMiniTickets() {
-  const strip = document.getElementById('tv-mini-tickets');
-  if (!strip || !state) return;
-  strip.innerHTML = '';
-  const marks = firebaseSnapshot.marks || {};
-  state.tickets.forEach((ticket, idx) => {
-    const key = playerKeysSorted[idx] || `player_${idx}`;
-    const playerInfo = state.playerInfos[idx] || { name: 'Player', emoji: '😀' };
-    const card = document.createElement('div');
-    card.className = 'mini-ticket';
-    const calledSet = new Set(state.drawnNumbers);
-    const playerMarks = new Set(marks[key] || []);
-    let body = '';
-    for (let r = 0; r < 3; r++) {
-      for (let c = 0; c < 9; c++) {
-        const v = ticket[r][c];
-        if (v === 0) {
-          body += '<span class="mt-cell empty"></span>';
-        } else {
-          const struck = playerMarks.has(v) && calledSet.has(v);
-          body += `<span class="mt-cell${struck ? ' struck' : ''}">${v}</span>`;
-        }
-      }
-    }
-    // Pattern badges this player has won
-    const badges = [];
-    Object.keys(state.claims).forEach((p) => {
-      const c = state.claims[p];
-      if (c?.won && c.winner === idx) badges.push(`<span class="mt-badge">${PATTERN_LABELS[p]}</span>`);
-    });
-    card.innerHTML = `
-      <div class="mt-head"><span class="mt-emoji">${escapeHtml(playerInfo.emoji)}</span><span class="mt-name">${escapeHtml(playerInfo.name)}</span></div>
-      <div class="mt-body">${body}</div>
-      <div class="mt-badges">${badges.join('')}</div>`;
-    strip.appendChild(card);
   });
 }
 
@@ -481,7 +433,6 @@ async function processClaimRequests(requests) {
       });
       showWinnerBanner(playerInfo, pattern);
       playSound('win');
-      renderMiniTickets();
       if (state.gameOver) {
         stopAutoCall();
         setTimeout(() => handleRoundEnd(), 3500);
