@@ -29,7 +29,7 @@ import {
 } from './firebase-sync.js';
 import { generateTickets, deserializeTicket } from './ticket-generator.js';
 import {
-  createGameState, drawNumber, awardClaim, evaluateClaim, getCalledSet,
+  createGameState, drawNumber, awardClaim, evaluateClaim, getCalledSet, reconstructFromFirebase,
 } from './game-engine.js';
 import { PATTERNS, PATTERN_LABELS } from './claim-validator.js';
 
@@ -85,6 +85,8 @@ export async function startTvFlow() {
 
 /**
  * Resume a TV session (browser refresh on the TV).
+ * If the room was 'active' when refreshed, rebuild the local engine state
+ * from Firebase so doDraw and claim resolution keep working.
  */
 export async function resumeTvSession(savedRoomCode) {
   document.body.dataset.mode = 'tv';
@@ -97,14 +99,45 @@ export async function resumeTvSession(savedRoomCode) {
     return;
   }
   setupTvDisconnectHandler(roomCode);
+
+  // Pull a fresh snapshot of the room and seed firebaseSnapshot before
+  // attaching the listener — otherwise the first listener fire would race
+  // with our reconstruct.
+  let snapshot = null;
+  try {
+    const snap = await firebaseRetry(() => get(ref(db, `tambola-mp-rooms/${savedRoomCode}`)));
+    if (snap.exists()) snapshot = snap.val();
+  } catch (_) {}
+
+  if (snapshot) {
+    firebaseSnapshot = {
+      meta: snapshot.meta,
+      players: snapshot.players || {},
+      tickets: snapshot.tickets || {},
+      game: snapshot.game || {},
+      marks: snapshot.marks || {},
+      claimRequests: snapshot.claimRequests || {},
+    };
+    if (snapshot.players) {
+      playerKeysSorted = Object.keys(snapshot.players).sort();
+    }
+  }
+
   attachRoomListener();
-  // Show appropriate screen based on status
+
   if (result.status === 'lobby') {
     showScreen('tv-lobby');
     setupLobbyUi();
-  } else if (result.status === 'active') {
-    // Reconstruct state from snapshot when listener fires
+  } else if (result.status === 'active' && snapshot) {
+    // Rebuild authoritative state from Firebase data so the TV can
+    // continue drawing, validating claims, and rendering after a refresh.
+    state = reconstructFromFirebase(snapshot, playerKeysSorted);
+    // Also rebuild the processed-requests set with already-resolved ones
+    // so we don't double-handle any pending claim requests.
+    _processedRequests = new Set();
+    _resultsShown = false;
     showScreen('tv-game');
+    setupGameUi();
   } else {
     clearSession();
     showScreen('home');

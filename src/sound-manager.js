@@ -95,32 +95,41 @@ function preloadNumbers() {
   }
 }
 
-async function unlockHandler(role) {
-  await resumeContext();
-  kickSilent();
-  preloadChimes();
-  if (role === 'display') preloadNumbers();
-  initialized = true;
-}
-
 /**
  * Initialise audio. Call once on app start. Attaches user-gesture listeners
  * that fire on every interaction (not just once) so iOS can re-warm the
  * context if it suspends mid-session.
+ *
+ * iOS quirk: kickSilent() and ctx.resume() MUST be invoked synchronously
+ * inside the click handler — iOS counts an audio call as "in-gesture" only
+ * if it happens before the call stack unwinds. Awaiting resume() before
+ * kicking the silent buffer is broken (kick lands in a microtask after the
+ * gesture is over).
+ *
  * @param {'phone'|'display'} role
  */
 export function initAudio(role) {
-  // Always (re-)attach; subsequent calls are cheap and idempotent.
+  // Attach (or re-attach) gesture listeners that fire on every interaction.
   getAudioContext();
   if (!initialized) preloadChimes();
-  const events = ['click', 'touchstart', 'keydown'];
+
   const handler = () => {
-    // resume + kick on every interaction so iOS keeps the ctx alive.
-    resumeContext().then(() => kickSilent());
+    const ctx = getAudioContext();
+    // Synchronous: call resume() and kick a silent buffer in the same stack
+    // as the user gesture. iOS treats this as authorised audio.
+    if (ctx) {
+      if (ctx.state === 'suspended') {
+        try { ctx.resume(); } catch (_) {}
+      }
+      kickSilent();
+    }
     if (!initialized) {
-      unlockHandler(role);
+      initialized = true;
+      preloadChimes();
+      if (role === 'display') preloadNumbers();
     }
   };
+  const events = ['click', 'touchstart', 'keydown'];
   for (const event of events) {
     document.addEventListener(event, handler, { passive: true });
   }
@@ -144,15 +153,21 @@ export function toggleMute() {
 }
 
 /**
- * Plays a chime by name. Awaits resume on iPad so the ctx is ready when we
- * actually start the buffer source.
+ * Plays a chime by name. On iOS the AudioContext must already be running
+ * (from a recent user gesture); otherwise we fall through to HTML Audio,
+ * which iPad's silent switch will mute — but for the TV/host case we expect
+ * the user has tapped Start Round (which warms the ctx) before any draw.
  */
-export async function playSound(name, volume = 1.0) {
+export function playSound(name, volume = 1.0) {
   if (isMuted()) return;
   const url = SOUND_FILES[name];
   if (!url) return;
   const ctx = getAudioContext();
-  if (ctx && ctx.state === 'suspended') await resumeContext();
+  // Best-effort sync resume — does NOT await, so we stay in any active
+  // user-gesture stack iOS might be tracking.
+  if (ctx && ctx.state === 'suspended') {
+    try { ctx.resume(); } catch (_) {}
+  }
 
   if (ctx && ctx.state === 'running' && soundBuffers[name]) {
     try {
@@ -174,15 +189,17 @@ export async function playSound(name, volume = 1.0) {
 }
 
 /**
- * Speak a called number (TV/display only). Awaits resume on iPad so the
- * spoken number actually plays out loud during auto-call.
+ * Speak a called number (TV/display only). Called numbers must use the
+ * AudioContext path on iPad because HTML Audio respects the silent switch.
  * @param {number} n  1..90
  */
-export async function speakNumber(n) {
+export function speakNumber(n) {
   if (isMuted()) return;
   if (n < 1 || n > 90) return;
   const ctx = getAudioContext();
-  if (ctx && ctx.state === 'suspended') await resumeContext();
+  if (ctx && ctx.state === 'suspended') {
+    try { ctx.resume(); } catch (_) {}
+  }
 
   if (ctx && ctx.state === 'running' && numberBuffers[n]) {
     try {

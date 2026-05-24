@@ -238,6 +238,18 @@ function attachRoomListener() {
     },
     onMarksChange: (marks) => {
       firebaseSnapshot.marks = marks;
+      // Hydrate myMarks from Firebase if my own slot is present (e.g. after
+      // a refresh) so we don't overwrite our struck numbers with an empty set.
+      const myKey = `player_${playerIndex}`;
+      const myFromFb = (marks && marks[myKey]) || null;
+      if (myFromFb && Array.isArray(myFromFb)) {
+        const remoteSet = new Set(myFromFb);
+        // Only hydrate if remote has more than local (avoid wiping unsaved local taps).
+        if (remoteSet.size > myMarks.size) {
+          myMarks = remoteSet;
+          renderPhoneTicket();
+        }
+      }
     },
     onRoomDeleted: () => {
       showToast('Host closed the room.', 2400);
@@ -384,6 +396,32 @@ function renderCalledBadge() {
     const arr = (firebaseSnapshot.game.drawnNumbers || []).slice(-4, -1).reverse();
     last3.innerHTML = arr.length ? arr.map((n) => `<span class="ln">${n}</span>`).join('') : '<span class="empty">—</span>';
   }
+  renderPhoneCalledGrid();
+}
+
+/**
+ * Renders the 1-90 grid on the phone, mirroring the TV's bottom strip.
+ * Built once, then per-update we toggle .called and .latest classes on cells.
+ */
+function renderPhoneCalledGrid() {
+  const grid = document.getElementById('phone-called-grid');
+  if (!grid) return;
+  if (!grid.dataset._built) {
+    grid.dataset._built = '1';
+    let html = '';
+    for (let n = 1; n <= 90; n++) {
+      html += `<div class="called-cell" data-num="${n}">${n}</div>`;
+    }
+    grid.innerHTML = html;
+  }
+  const drawn = (firebaseSnapshot.game && firebaseSnapshot.game.drawnNumbers) || [];
+  const drawnSet = new Set(drawn);
+  const latest = drawn.length ? drawn[drawn.length - 1] : null;
+  grid.querySelectorAll('.called-cell').forEach((c) => {
+    const n = parseInt(c.dataset.num, 10);
+    c.classList.toggle('called', drawnSet.has(n));
+    c.classList.toggle('latest', n === latest);
+  });
 }
 
 /**

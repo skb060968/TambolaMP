@@ -790,6 +790,40 @@ body[data-mode="phone"] .screen { max-width: 480px; margin: 0 auto; }
 .toggle-label { display: flex; gap: 6px; align-items: center; cursor: pointer; user-select: none; }
 .toggle-label input[type="checkbox"] { width: 18px; height: 18px; accent-color: #ffd700; }
 
+/* 1–90 called numbers grid on phone — 9 cols × 10 rows for portrait. */
+.phone-called-grid {
+  display: grid;
+  grid-template-columns: repeat(9, 1fr);
+  gap: 3px;
+  background: rgba(20, 10, 0, 0.55);
+  border-radius: 8px;
+  padding: 6px;
+  width: 100%;
+  max-width: 480px;
+}
+.phone-called-grid .called-cell {
+  aspect-ratio: 1 / 1;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: clamp(0.7rem, 2.6vw, 1rem);
+  color: rgba(255, 255, 255, 0.55);
+  transition: background 0.2s, color 0.2s, transform 0.2s;
+}
+.phone-called-grid .called-cell.called {
+  background: rgba(255, 215, 0, 0.85);
+  color: #2c1810;
+}
+.phone-called-grid .called-cell.latest {
+  background: #ff6b6b;
+  color: #fff;
+  transform: scale(1.08);
+  box-shadow: 0 0 8px rgba(255, 107, 107, 0.6);
+}
+
 .phone-winner-banner {
   position: fixed;
   top: 30%; left: 50%;
