@@ -57,24 +57,26 @@
     <section id="tv-game" class="screen tv-game-screen" hidden aria-label="TV game">
       <header class="tv-game-header">
         <h1 class="tv-title">TAMBOLA MULTIPLAYER</h1>
-        <div class="tv-controls">
-          <button id="btn-tv-next" class="btn primary" type="button">Next Number</button>
-          <button id="btn-tv-auto" class="btn secondary" type="button">▶ Auto Call</button>
-          <select id="tv-auto-speed" class="speed-select">
-            <option value="3">3s</option>
-            <option value="5" selected>5s</option>
-            <option value="8">8s</option>
-          </select>
-          <button id="btn-tv-game-mute" class="icon-btn" type="button" title="Mute">🔊</button>
-          <button id="btn-tv-end" class="btn-end" type="button" title="End Round">✕ End</button>
-        </div>
       </header>
       <div class="tv-game-body">
+        <div class="tv-players-side tv-players-left" id="tv-players-left"></div>
         <div class="tv-caller">
           <div id="tv-caller-ball" class="tv-caller-ball ball-sphere" role="img" aria-label="Current called number">
             <span id="tv-current-number" class="tv-current-number ball-number">—</span>
           </div>
+          <div class="tv-game-controls">
+            <button id="btn-tv-next" class="btn primary" type="button">Next Number</button>
+            <button id="btn-tv-auto" class="btn secondary" type="button">▶ Auto Call</button>
+            <select id="tv-auto-speed" class="speed-select">
+              <option value="3">3s</option>
+              <option value="5" selected>5s</option>
+              <option value="8">8s</option>
+            </select>
+            <button id="btn-tv-game-mute" class="icon-btn" type="button" title="Mute">🔊</button>
+            <button id="btn-tv-end" class="btn-end" type="button" title="End Round">✕ End</button>
+          </div>
         </div>
+        <div class="tv-players-side tv-players-right" id="tv-players-right"></div>
       </div>
       <div id="tv-called-grid" class="tv-called-grid"></div>
       <div id="tv-winner-banner" class="tv-winner-banner"></div>
@@ -86,6 +88,7 @@
         <h1 class="tv-results-title">🏆 Round Over</h1>
       </header>
       <ul id="tv-results-list" class="tv-results-list"></ul>
+      <div id="tv-results-summary" class="tv-results-summary"></div>
       <div class="tv-results-actions">
         <button id="btn-tv-play-again" class="btn primary big" type="button">▶ Play Again</button>
         <button id="btn-tv-close-room" class="btn secondary" type="button">Close Room</button>
@@ -174,6 +177,7 @@
         <h2 class="phone-results-title">🏆 Round Over</h2>
       </header>
       <ul id="phone-results-list" class="phone-results-list"></ul>
+      <div id="phone-results-summary" class="phone-results-summary"></div>
       <div class="phone-results-actions">
         <button id="btn-phone-play-again" class="btn primary" type="button">▶ Play Again</button>
         <button id="btn-phone-home" class="btn secondary" type="button">Home</button>

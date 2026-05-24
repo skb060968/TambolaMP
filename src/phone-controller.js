@@ -147,15 +147,17 @@ function attachRoomListener() {
       firebaseSnapshot.meta = meta;
       if (meta.status === 'lobby') {
         // Returned to lobby (e.g. after Play Again)
-        if (document.getElementById('phone-results') && !document.getElementById('phone-results').hasAttribute('hidden')) {
-          // From results, show lobby
-        }
         // Reset round-local state
         myTicket = null;
         myMarks = new Set();
         calledSet = new Set();
         lastCalled = null;
         _resultsShown = false;
+        _bannersShown.clear();
+        // Reset Play Again + claim buttons
+        const again = document.getElementById('btn-phone-play-again');
+        if (again) { again.disabled = false; again.textContent = '▶ Play Again'; }
+        document.querySelectorAll('.claim-btn').forEach((b) => b.classList.remove('won', 'mine-won'));
         showScreen('phone-lobby');
         renderPhoneLobby();
       } else if (meta.status === 'active') {
@@ -213,6 +215,7 @@ function attachRoomListener() {
       }
       renderCalledBadge();
       renderPhoneTicket();
+      renderClaimButtons();
       // Handle win/banner from claims
       if (game.claims) {
         Object.keys(game.claims).forEach((p) => {
@@ -383,6 +386,25 @@ function renderCalledBadge() {
   }
 }
 
+/**
+ * Reflects each pattern's won state on the claim buttons:
+ *   - won by anyone → 'won' class (greyed-out, ✓ tick)
+ *   - won by ME → additional 'mine-won' class (gold gradient)
+ */
+function renderClaimButtons() {
+  const claims = (firebaseSnapshot.game && firebaseSnapshot.game.claims) || {};
+  document.querySelectorAll('.claim-btn').forEach((btn) => {
+    const pattern = btn.dataset.pattern;
+    const c = claims[pattern];
+    if (c?.won) {
+      btn.classList.add('won');
+      btn.classList.toggle('mine-won', c.winner === playerIndex);
+    } else {
+      btn.classList.remove('won', 'mine-won');
+    }
+  });
+}
+
 async function handleClaim(pattern) {
   if (roomCode == null || playerIndex == null) return;
   if (!myTicket) return;
@@ -406,8 +428,24 @@ function showWinBannerOnce(pattern, c) {
   if (!banner) return;
   banner.innerHTML = `🏆 <strong>${escapeHtml(c.playerName || 'Player')}</strong> won <em>${PATTERN_LABELS[pattern]}</em>!`;
   banner.classList.add('show');
-  if (c.winner === playerIndex) playSound('win');
+  // Win sound and confetti fire on EVERY phone, not just the winner's,
+  // so all players see/hear that someone has claimed the pattern.
+  playSound('win');
+  burstConfetti();
   setTimeout(() => banner.classList.remove('show'), 2400);
+}
+
+function burstConfetti() {
+  if (typeof window.confetti === 'function') {
+    try {
+      window.confetti({
+        particleCount: 140,
+        spread: 80,
+        origin: { y: 0.5 },
+        colors: ['#ffd700', '#ff6b6b', '#51cf66', '#2b6ef6'],
+      });
+    } catch (_) {}
+  }
 }
 
 /* ======= RESULTS ======= */
@@ -440,16 +478,56 @@ function renderPhoneResults() {
   const game = firebaseSnapshot.game || {};
   const claims = game.claims || {};
   list.innerHTML = '';
+
+  // Same prize map the TV uses (kept in sync — change one, change the other).
+  const PHONE_PRIZES = {
+    topLine: 20, middleLine: 20, bottomLine: 20, corners: 15, fullHouse: 50,
+  };
+
+  // Track totals for the prize summary.
+  const totals = {};
+
   Object.keys(PATTERNS).forEach((p) => {
     const c = claims[p];
+    const prize = PHONE_PRIZES[p] || 0;
     const li = document.createElement('li');
     if (c?.won) {
-      li.innerHTML = `<span class="rl-pat">${PATTERN_LABELS[p]}</span> <span class="rl-winner">🏆 ${escapeHtml(c.playerName || 'Player')}</span>`;
+      const name = c.playerName || 'Player';
+      totals[c.winner] = (totals[c.winner] || 0) + prize;
+      li.innerHTML = `<span class="rl-pat">${PATTERN_LABELS[p]}</span> <span class="rl-winner">🏆 ${escapeHtml(name)}</span> <span class="rl-prize">🪙 ${prize}</span>`;
     } else {
-      li.innerHTML = `<span class="rl-pat">${PATTERN_LABELS[p]}</span> <span class="rl-winner muted">—</span>`;
+      li.innerHTML = `<span class="rl-pat">${PATTERN_LABELS[p]}</span> <span class="rl-winner muted">Unclaimed</span> <span class="rl-prize muted">🪙 ${prize}</span>`;
     }
     list.appendChild(li);
   });
+
+  // Prize summary
+  const summary = document.getElementById('phone-results-summary');
+  if (summary) {
+    summary.innerHTML = '';
+    const players = firebaseSnapshot.players || {};
+    const entries = Object.entries(totals).sort((a, b) => b[1] - a[1]);
+    if (entries.length > 0) {
+      const heading = document.createElement('h3');
+      heading.className = 'phone-results-summary-heading';
+      heading.textContent = '🏆 Prize Summary';
+      summary.appendChild(heading);
+      entries.forEach(([idx, coins]) => {
+        const p = players[`player_${idx}`] || { name: 'Player', emoji: '😀' };
+        const row = document.createElement('div');
+        row.className = 'phone-results-total-row';
+        row.innerHTML = `<span class="rl-emoji">${escapeHtml(p.emoji)}</span><span class="rl-name">${escapeHtml(p.name)}</span><span class="rl-total">🪙 ${coins}</span>`;
+        summary.appendChild(row);
+      });
+    }
+  }
+
+  // Reset Play Again button state for this round.
+  const again = document.getElementById('btn-phone-play-again');
+  if (again) {
+    again.disabled = false;
+    again.textContent = '▶ Play Again';
+  }
 }
 
 /* ======= CLEANUP ======= */

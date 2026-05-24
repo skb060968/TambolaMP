@@ -32,12 +32,22 @@ import {
   createGameState, drawNumber, awardClaim, evaluateClaim, getCalledSet,
 } from './game-engine.js';
 import { PATTERNS, PATTERN_LABELS } from './claim-validator.js';
+
 import {
   initAudio, playSound, speakNumber, isMuted, toggleMute,
 } from './sound-manager.js';
 import { showScreen, showToast, confirmModal } from './platform-ui.js';
 import { db } from './firebase-config.js';
 import { ref, get } from 'firebase/database';
+
+/* Prize values per pattern. Awarded to the first valid claimer. */
+const PATTERN_PRIZES = {
+  [PATTERNS.topLine]:    20,
+  [PATTERNS.middleLine]: 20,
+  [PATTERNS.bottomLine]: 20,
+  [PATTERNS.corners]:    15,
+  [PATTERNS.fullHouse]:  50,
+};
 
 const SESSION_KEY = 'tambola_mp_session';
 
@@ -169,8 +179,10 @@ function attachRoomListener() {
     },
     onMarksChange: (marks) => {
       firebaseSnapshot.marks = marks;
-      // Marks no longer rendered on TV (mini-tickets removed) — host
-      // still uses them when validating claims via firebaseSnapshot.marks.
+      // Re-render player side panels so uncut counts update live.
+      if (firebaseSnapshot.meta?.status === 'active') {
+        renderPlayersSides();
+      }
     },
     onClaimRequests: (requests) => {
       firebaseSnapshot.claimRequests = requests;
@@ -272,9 +284,47 @@ async function startRound() {
 function setupGameUi() {
   renderCallerUi();
   renderCalledGrid();
+  renderPlayersSides();
   // Reset banner area
   const banner = document.getElementById('tv-winner-banner');
   if (banner) banner.classList.remove('show');
+}
+
+/**
+ * Renders the player columns flanking the caller ball.
+ * Players are split half-and-half across the two sides; if more than 10
+ * per side they switch to a 2-column inner layout.
+ */
+function renderPlayersSides() {
+  const left = document.getElementById('tv-players-left');
+  const right = document.getElementById('tv-players-right');
+  if (!left || !right || !state) return;
+  const marks = firebaseSnapshot.marks || {};
+  const total = state.tickets.length;
+  const half = Math.ceil(total / 2);
+
+  const renderInto = (el, fromIdx, toIdx) => {
+    const slice = state.playerInfos.slice(fromIdx, toIdx);
+    el.innerHTML = '';
+    el.classList.toggle('cols-2', slice.length > 10);
+    slice.forEach((info, localI) => {
+      const idx = fromIdx + localI;
+      const ticket = state.tickets[idx];
+      const total15 = ticket.flat().filter((v) => v > 0).length;
+      const key = playerKeysSorted[idx] || `player_${idx}`;
+      const struck = (marks[key] || []).filter((n) => state.drawnNumbers.includes(n)).length;
+      const uncut = total15 - struck;
+      const card = document.createElement('div');
+      card.className = 'tv-player-card';
+      card.innerHTML = `
+        <span class="pc-emoji">${escapeHtml(info.emoji || '😀')}</span>
+        <span class="pc-name">${escapeHtml(info.name || 'Player')}</span>
+        <span class="pc-uncut" title="Numbers remaining">${uncut}</span>`;
+      el.appendChild(card);
+    });
+  };
+  renderInto(left, 0, half);
+  renderInto(right, half, total);
 }
 
 function wireTvGame() {
@@ -332,6 +382,7 @@ async function doDraw() {
   animateBall(result.number);
   renderCallerUi();
   renderCalledGrid();
+  renderPlayersSides();
 }
 
 function toggleAutoCall() {
@@ -433,8 +484,12 @@ async function processClaimRequests(requests) {
       });
       showWinnerBanner(playerInfo, pattern);
       playSound('win');
+      renderPlayersSides();
       if (state.gameOver) {
+        // Full House won — host should auto-end so phones see the
+        // results screen without anyone having to press "End".
         stopAutoCall();
+        try { await fbEndGame(roomCode); } catch (_) {}
         setTimeout(() => handleRoundEnd(), 3500);
       }
     } else {
@@ -479,16 +534,40 @@ function renderResultsUi() {
   const list = document.getElementById('tv-results-list');
   if (!list || !state) return;
   list.innerHTML = '';
+  // Track totals per player for the prize summary.
+  const totals = {};
   Object.keys(PATTERNS).forEach((p) => {
     const c = state.claims[p];
+    const prize = PATTERN_PRIZES[p] || 0;
     const li = document.createElement('li');
     if (c?.won) {
-      li.innerHTML = `<span class="rl-pat">${PATTERN_LABELS[p]}</span> <span class="rl-winner">🏆 ${escapeHtml(c.playerName || 'Player')}</span>`;
+      const name = c.playerName || (state.playerInfos[c.winner]?.name) || 'Player';
+      totals[c.winner] = (totals[c.winner] || 0) + prize;
+      li.innerHTML = `<span class="rl-pat">${PATTERN_LABELS[p]}</span> <span class="rl-winner">🏆 ${escapeHtml(name)}</span> <span class="rl-prize">🪙 ${prize}</span>`;
     } else {
-      li.innerHTML = `<span class="rl-pat">${PATTERN_LABELS[p]}</span> <span class="rl-winner muted">—</span>`;
+      li.innerHTML = `<span class="rl-pat">${PATTERN_LABELS[p]}</span> <span class="rl-winner muted">Unclaimed</span> <span class="rl-prize muted">🪙 ${prize}</span>`;
     }
     list.appendChild(li);
   });
+  // Prize summary section
+  const summary = document.getElementById('tv-results-summary');
+  if (summary) {
+    summary.innerHTML = '';
+    const entries = Object.entries(totals).sort((a, b) => b[1] - a[1]);
+    if (entries.length > 0) {
+      const heading = document.createElement('h3');
+      heading.className = 'tv-results-summary-heading';
+      heading.textContent = '🏆 Prize Summary';
+      summary.appendChild(heading);
+      entries.forEach(([idx, coins]) => {
+        const info = state.playerInfos[idx] || { name: 'Player', emoji: '😀' };
+        const row = document.createElement('div');
+        row.className = 'tv-results-total-row';
+        row.innerHTML = `<span class="rl-emoji">${escapeHtml(info.emoji)}</span><span class="rl-name">${escapeHtml(info.name)}</span><span class="rl-total">🪙 ${coins}</span>`;
+        summary.appendChild(row);
+      });
+    }
+  }
 }
 
 function wireTvResults() {

@@ -307,69 +307,97 @@ body[data-mode="tv"] #tv-create { justify-content: center; }
 .tv-lobby-actions { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
 
 .tv-game-screen {
-  padding: 16px 24px;
-  gap: 14px;
+  padding: 12px 20px;
+  gap: 8px;
   height: 100svh;
   overflow: hidden;
 }
 .tv-game-header {
   width: 100%;
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
+  display: flex;
+  justify-content: center;
   align-items: center;
-  gap: 12px;
+  flex-shrink: 0;
 }
 .tv-game-header .tv-title {
-  grid-column: 2;
-  font-size: clamp(1.4rem, 2.4vw, 2rem);
+  font-size: clamp(1.2rem, 2vw, 1.8rem);
   letter-spacing: 3px;
 }
-.tv-controls {
-  grid-column: 3;
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-}
-.tv-controls .btn { width: auto; padding: 8px 14px; font-size: 0.9rem; }
-.speed-select {
-  padding: 8px 10px;
-  border-radius: 8px;
-  border: 2px solid rgba(255,255,255,0.2);
-  background: rgba(255,255,255,0.08);
-  color: #fff;
-  font-weight: 700;
-}
 
-/* Centered caller ball, fills the available middle area. */
+/* Game body: player columns flank the caller. */
 .tv-game-body {
   flex: 1;
   width: 100%;
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  gap: 16px;
   align-items: center;
-  justify-content: center;
   min-height: 0;
 }
-.tv-caller {
+
+.tv-players-side {
+  display: grid;
+  grid-template-columns: 1fr;
+  grid-auto-rows: min-content;
+  gap: 4px;
+  align-content: center;
+  height: 100%;
+  overflow: hidden;
+}
+.tv-players-side.cols-2 { grid-template-columns: 1fr 1fr; }
+.tv-player-card {
+  background: rgba(255,255,255,0.08);
+  border-radius: 8px;
+  padding: 6px 10px;
   display: flex;
   align-items: center;
-  justify-content: center;
+  gap: 8px;
+  font-weight: 700;
+}
+.tv-player-card.disconnected { opacity: 0.4; }
+.tv-player-card .pc-emoji { font-size: 1.2rem; flex-shrink: 0; }
+.tv-player-card .pc-name {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: clamp(0.7rem, 1vw, 1rem);
+}
+.tv-player-card .pc-uncut {
+  font-family: 'Courier New', monospace;
+  font-weight: 800;
+  font-size: clamp(0.75rem, 1.1vw, 1.05rem);
+  color: #ffd700;
+  background: rgba(255,215,0,0.12);
+  padding: 1px 8px;
+  border-radius: 999px;
+  flex-shrink: 0;
 }
 
-/* Animated lottery ball — big, dominant. */
+/* Caller column: ball + controls below. */
+.tv-caller {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  min-height: 0;
+}
+
+/* Bigger ball — fills more of the available middle area. */
 .tv-caller-ball {
-  width: clamp(280px, 50svh, 70svh);
-  height: clamp(280px, 50svh, 70svh);
+  width: clamp(320px, 60svh, 80svh);
+  height: clamp(320px, 60svh, 80svh);
   position: relative;
   border-radius: 50%;
   background: url("/images/ball.png") center / cover no-repeat;
   display: flex;
   align-items: center;
   justify-content: center;
+  flex-shrink: 0;
 }
 .tv-current-number {
-  font-size: calc(min(50svh, 70svh) * 0.22);
+  font-size: calc(min(60svh, 80svh) * 0.22);
   font-weight: 900;
   background: linear-gradient(180deg, #e74c3c, #f39c12);
   -webkit-background-clip: text;
@@ -380,6 +408,25 @@ body[data-mode="tv"] #tv-create { justify-content: center; }
   transform: translate(-50%, -60%);
   -webkit-text-stroke: 0.5px rgba(0,0,0,0.2);
 }
+
+.tv-game-controls {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.tv-game-controls .btn { width: auto; padding: 8px 14px; font-size: 0.9rem; }
+.speed-select {
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 2px solid rgba(255,255,255,0.2);
+  background: rgba(255,255,255,0.08);
+  color: #fff;
+  font-weight: 700;
+}
+
 @keyframes ball-drop-bounce {
   0%   { transform: translateY(-40px) scale(0.85); opacity: 0.6; }
   25%  { transform: translateY(6px) scale(1.05, 0.92); opacity: 1; }
@@ -480,8 +527,10 @@ body[data-mode="tv"] #tv-create { justify-content: center; }
   gap: 8px;
 }
 .tv-results-list li {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  align-items: center;
+  gap: 12px;
   padding: 12px 16px;
   background: rgba(255,255,255,0.08);
   border-radius: 10px;
@@ -490,7 +539,48 @@ body[data-mode="tv"] #tv-create { justify-content: center; }
 }
 .rl-pat { color: rgba(255,255,255,0.7); }
 .rl-winner { color: #ffd700; }
-.rl-winner.muted { opacity: 0.5; color: rgba(255,255,255,0.5); }
+.rl-winner.muted { opacity: 0.5; color: rgba(255,255,255,0.5); font-style: italic; }
+.rl-prize {
+  font-family: 'Courier New', monospace;
+  background: rgba(255,215,0,0.18);
+  color: #ffd700;
+  padding: 2px 12px;
+  border-radius: 999px;
+}
+.rl-prize.muted { opacity: 0.4; background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.5); }
+
+.tv-results-summary {
+  width: 100%;
+  max-width: 560px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.tv-results-summary:empty { display: none; }
+.tv-results-summary-heading {
+  font-family: Georgia, serif;
+  font-size: 1.3rem;
+  text-align: center;
+  margin-top: 8px;
+  color: #ffd700;
+}
+.tv-results-total-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  background: rgba(255,215,0,0.12);
+  border-radius: 10px;
+  font-weight: 700;
+}
+.tv-results-total-row .rl-emoji { font-size: 1.3rem; }
+.tv-results-total-row .rl-name { color: #fff; }
+.tv-results-total-row .rl-total {
+  font-family: 'Courier New', monospace;
+  font-size: 1.1rem;
+  color: #ffd700;
+}
 .tv-results-actions { display: flex; gap: 12px; }
 
 /* =========================================================
@@ -670,9 +760,30 @@ body[data-mode="phone"] .screen { max-width: 480px; margin: 0 auto; }
   text-align: center;
   white-space: nowrap;
   box-shadow: 0 3px 0 #1a3f9c;
+  transition: filter 0.15s, transform 0.12s, box-shadow 0.12s, background 0.2s;
 }
 .claim-btn:hover { filter: brightness(1.1); }
 .claim-btn:active { transform: translateY(2px); box-shadow: 0 1px 0 #1a3f9c; }
+
+/* Pattern already won by anyone — visually disabled on every player's screen */
+.claim-btn.won {
+  background: linear-gradient(180deg, #4a3a8b, #2c2654);
+  color: #ffd700;
+  cursor: not-allowed;
+  pointer-events: none;
+  filter: grayscale(0.5);
+  box-shadow: 0 3px 0 #1a1538;
+  opacity: 0.85;
+  position: relative;
+}
+.claim-btn.won::after {
+  content: '✓';
+  position: absolute;
+  top: 2px; right: 4px;
+  font-size: 0.7rem;
+  color: #ffd700;
+}
+.claim-btn.mine-won { background: linear-gradient(180deg, #ffd700, #c9a200); color: #2c1810; box-shadow: 0 3px 0 #8c7100; }
 
 .phone-bottom-row { display: flex; gap: 16px; align-items: center; justify-content: center; }
 .phone-bottom-row .icon-btn { width: 36px; height: 36px; font-size: 1rem; }
@@ -713,12 +824,60 @@ body[data-mode="phone"] .screen { max-width: 480px; margin: 0 auto; }
   gap: 6px;
 }
 .phone-results-list li {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  align-items: center;
+  gap: 8px;
   padding: 10px 12px;
   background: rgba(255,255,255,0.08);
   border-radius: 8px;
   font-weight: 700;
+  font-size: 0.9rem;
+}
+.phone-results-list .rl-pat { color: rgba(255,255,255,0.7); }
+.phone-results-list .rl-winner { color: #ffd700; }
+.phone-results-list .rl-winner.muted { opacity: 0.5; color: rgba(255,255,255,0.5); font-style: italic; }
+.phone-results-list .rl-prize {
+  font-family: 'Courier New', monospace;
+  background: rgba(255,215,0,0.18);
+  color: #ffd700;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.85rem;
+}
+.phone-results-list .rl-prize.muted { opacity: 0.4; background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.5); }
+
+.phone-results-summary {
+  width: 100%;
+  max-width: 360px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.phone-results-summary:empty { display: none; }
+.phone-results-summary-heading {
+  font-family: Georgia, serif;
+  font-size: 1rem;
+  text-align: center;
+  margin-top: 6px;
+  color: #ffd700;
+}
+.phone-results-total-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: rgba(255,215,0,0.12);
+  border-radius: 8px;
+  font-weight: 700;
+  font-size: 0.85rem;
+}
+.phone-results-total-row .rl-emoji { font-size: 1.1rem; }
+.phone-results-total-row .rl-name { color: #fff; }
+.phone-results-total-row .rl-total {
+  font-family: 'Courier New', monospace;
+  color: #ffd700;
 }
 .phone-results-actions { display: flex; gap: 10px; }
 .phone-results-actions .btn { max-width: 140px; }

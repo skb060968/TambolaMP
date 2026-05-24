@@ -7,6 +7,16 @@
  *
  * Uses AudioContext where available, falls back to HTML Audio.
  * Mute toggle persisted to localStorage (per-device).
+ *
+ * iPad / iOS Safari notes:
+ *   - AudioContext.state stays 'suspended' until a user gesture, and Safari
+ *     can re-suspend it during inactivity. We resume aggressively before each
+ *     play attempt and use a silent warm-up buffer on every interaction to
+ *     keep the ctx awake.
+ *   - resumeContext is awaited inside speakNumber/playSound so the ctx is
+ *     actually 'running' before we try to start a buffer source. Without the
+ *     await, on iPad the play call happens while ctx is still resuming and
+ *     drops silently.
  */
 
 const SOUND_FILES = {
@@ -23,6 +33,8 @@ let audioCtx = null;
 const soundBuffers = {};
 const numberBuffers = {};
 let initialized = false;
+/** Cached silent buffer used to "kick" iOS audio on every interaction. */
+let silentBuffer = null;
 
 function getAudioContext() {
   if (!audioCtx) {
@@ -37,6 +49,23 @@ async function resumeContext() {
   if (ctx && ctx.state === 'suspended') {
     try { await ctx.resume(); } catch (_) {}
   }
+}
+
+/**
+ * Plays a 1-sample silent buffer through the AudioContext. iOS uses this as
+ * a "still alive" signal — without it, the context can suspend mid-game and
+ * subsequent plays drop silently.
+ */
+function kickSilent() {
+  const ctx = getAudioContext();
+  if (!ctx) return;
+  try {
+    if (!silentBuffer) silentBuffer = ctx.createBuffer(1, 1, 22050);
+    const src = ctx.createBufferSource();
+    src.buffer = silentBuffer;
+    src.connect(ctx.destination);
+    src.start(0);
+  } catch (_) {}
 }
 
 async function loadBuffer(url) {
@@ -68,22 +97,32 @@ function preloadNumbers() {
 
 async function unlockHandler(role) {
   await resumeContext();
+  kickSilent();
   preloadChimes();
   if (role === 'display') preloadNumbers();
   initialized = true;
 }
 
 /**
- * Initialise audio. Call once on app start.
+ * Initialise audio. Call once on app start. Attaches user-gesture listeners
+ * that fire on every interaction (not just once) so iOS can re-warm the
+ * context if it suspends mid-session.
  * @param {'phone'|'display'} role
  */
 export function initAudio(role) {
-  if (initialized) return;
+  // Always (re-)attach; subsequent calls are cheap and idempotent.
   getAudioContext();
-  preloadChimes();
+  if (!initialized) preloadChimes();
   const events = ['click', 'touchstart', 'keydown'];
-  for (const ev of events) {
-    document.addEventListener(ev, () => unlockHandler(role), { once: true });
+  const handler = () => {
+    // resume + kick on every interaction so iOS keeps the ctx alive.
+    resumeContext().then(() => kickSilent());
+    if (!initialized) {
+      unlockHandler(role);
+    }
+  };
+  for (const event of events) {
+    document.addEventListener(event, handler, { passive: true });
   }
 }
 
@@ -104,12 +143,16 @@ export function toggleMute() {
   return next;
 }
 
-export function playSound(name, volume = 1.0) {
+/**
+ * Plays a chime by name. Awaits resume on iPad so the ctx is ready when we
+ * actually start the buffer source.
+ */
+export async function playSound(name, volume = 1.0) {
   if (isMuted()) return;
   const url = SOUND_FILES[name];
   if (!url) return;
   const ctx = getAudioContext();
-  if (ctx && ctx.state === 'suspended') resumeContext();
+  if (ctx && ctx.state === 'suspended') await resumeContext();
 
   if (ctx && ctx.state === 'running' && soundBuffers[name]) {
     try {
@@ -131,14 +174,15 @@ export function playSound(name, volume = 1.0) {
 }
 
 /**
- * Speak a called number (TV/display only).
+ * Speak a called number (TV/display only). Awaits resume on iPad so the
+ * spoken number actually plays out loud during auto-call.
  * @param {number} n  1..90
  */
-export function speakNumber(n) {
+export async function speakNumber(n) {
   if (isMuted()) return;
   if (n < 1 || n > 90) return;
   const ctx = getAudioContext();
-  if (ctx && ctx.state === 'suspended') resumeContext();
+  if (ctx && ctx.state === 'suspended') await resumeContext();
 
   if (ctx && ctx.state === 'running' && numberBuffers[n]) {
     try {
