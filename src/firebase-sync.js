@@ -152,7 +152,10 @@ export function listenRoom(roomCode, callbacks) {
     }
     const data = snap.val();
     if (callbacks.onMetaChange && data.meta) callbacks.onMetaChange(data.meta);
-    if (callbacks.onPlayersChange && data.players !== undefined) callbacks.onPlayersChange(data.players || {});
+    // Fire onPlayersChange even when the players node is missing — Firebase
+    // removes an empty parent, so a "last player left" event would otherwise
+    // silently never fire and the lobby would keep showing the ghost player.
+    if (callbacks.onPlayersChange) callbacks.onPlayersChange(data.players || {});
     if (callbacks.onGameUpdate && data.game) callbacks.onGameUpdate(data.game);
     if (callbacks.onMarksChange) callbacks.onMarksChange(data.marks || {});
     if (callbacks.onTicketsChange) callbacks.onTicketsChange(data.tickets || {});

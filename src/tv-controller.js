@@ -221,6 +221,15 @@ function attachRoomListener() {
       firebaseSnapshot.claimRequests = requests;
       processClaimRequests(requests);
     },
+    onReadyChange: (ready) => {
+      firebaseSnapshot.ready = ready;
+      // If we're showing the results screen, refresh the dots so the host
+      // can see live who's clicked Play Again vs Home.
+      const resultsEl = document.getElementById('tv-results');
+      if (resultsEl && !resultsEl.hasAttribute('hidden')) {
+        renderTvReadyIndicators();
+      }
+    },
     onRoomDeleted: () => {
       cleanupAndGoHome();
     },
@@ -409,13 +418,29 @@ async function doDraw() {
   const result = drawNumber(state);
   if (!result) return;
   state = result.newState;
-  await broadcastDraw(roomCode, state.drawnNumbers, result.number);
+
+  // Sequence the announcement so it feels like a real lottery:
+  //   t=0     ball pops / spins (number hidden), soft chime
+  //   t=700   ball settles, number reveals, speech plays, Firebase write
+  //           goes out → phones update grid + last-3 + auto-cut at the same
+  //           moment the TV reveals.
+  // Without this gating, phones strike the number on their tickets before
+  // the ball has even finished animating, which makes the ticket feel like
+  // it knows the next number ahead of time.
   playSound('draw', 0.5);
-  speakNumber(result.number);
   animateBall(result.number);
-  renderCallerUi();
-  renderCalledGrid();
-  renderPlayersSides();
+
+  setTimeout(async () => {
+    speakNumber(result.number);
+    renderCallerUi();
+    renderCalledGrid();
+    renderPlayersSides();
+    try {
+      await broadcastDraw(roomCode, state.drawnNumbers, result.number);
+    } catch (err) {
+      console.warn('broadcastDraw failed:', err.message);
+    }
+  }, 700);
 }
 
 function toggleAutoCall() {
@@ -560,7 +585,45 @@ function handleRoundEnd() {
   _resultsShown = true;
   stopAutoCall();
   renderResultsUi();
+  renderTvReadyIndicators();
   showScreen('tv-results');
+}
+
+/**
+ * Renders the per-player ready dots on the TV results screen.
+ * Green = player clicked Play Again, Red = player clicked Home,
+ * hollow = waiting. The host uses this to decide when to start a new round.
+ */
+function renderTvReadyIndicators() {
+  const container = document.getElementById('tv-ready-indicators');
+  if (!container) return;
+  const ready = firebaseSnapshot.ready || {};
+  const players = firebaseSnapshot.players || {};
+  const keys = Object.keys(players).sort();
+  if (keys.length === 0) {
+    container.hidden = true;
+    container.innerHTML = '';
+    return;
+  }
+  container.hidden = false;
+  container.innerHTML = '';
+  keys.forEach((k) => {
+    const p = players[k] || {};
+    const idx = parseInt(k.replace('player_', ''), 10);
+    const r = ready[k];
+    const dotEl = document.createElement('div');
+    dotEl.className = 'ready-dot';
+    if (r === true) dotEl.classList.add('ready');
+    else if (r === 'left') dotEl.classList.add('left');
+    const circle = document.createElement('div');
+    circle.className = 'dot';
+    const label = document.createElement('span');
+    label.className = 'dot-name';
+    label.textContent = `${p.emoji || ''} ${p.name || `P${idx + 1}`}`.trim();
+    dotEl.appendChild(circle);
+    dotEl.appendChild(label);
+    container.appendChild(dotEl);
+  });
 }
 
 function renderResultsUi() {

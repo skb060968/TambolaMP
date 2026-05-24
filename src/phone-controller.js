@@ -251,6 +251,14 @@ function attachRoomListener() {
         }
       }
     },
+    onReadyChange: (ready) => {
+      firebaseSnapshot.ready = ready;
+      // Refresh the ready dots on the results screen if we're showing it.
+      const resultsEl = document.getElementById('phone-results');
+      if (resultsEl && !resultsEl.hasAttribute('hidden')) {
+        renderPhoneReadyIndicators();
+      }
+    },
     onRoomDeleted: () => {
       showToast('Host closed the room.', 2400);
       cleanupAndGoHome();
@@ -494,7 +502,10 @@ function wirePhoneResults() {
   const home = document.getElementById('btn-phone-home');
   const again = document.getElementById('btn-phone-play-again');
   if (home) home.addEventListener('click', async () => {
+    // Write 'left' so other players see a red dot on the results screen,
+    // matching the original Tambola feel. Then leave the room and go home.
     if (roomCode != null && playerIndex != null) {
+      try { await setReady(roomCode, playerIndex, 'left'); } catch (_) {}
       try { await leaveRoom(roomCode, playerIndex); } catch (_) {}
     }
     cleanupAndGoHome();
@@ -566,6 +577,48 @@ function renderPhoneResults() {
     again.disabled = false;
     again.textContent = '▶ Play Again';
   }
+
+  renderPhoneReadyIndicators();
+}
+
+/**
+ * Renders the per-player circles below the results — green if the player
+ * has clicked Play Again, red if they've clicked Home, hollow otherwise.
+ * Mirrors the original Tambola behaviour so the host can see at a glance
+ * who's still around for another round.
+ */
+function renderPhoneReadyIndicators() {
+  const container = document.getElementById('phone-ready-indicators');
+  if (!container) return;
+  const ready = firebaseSnapshot.ready || {};
+  const players = firebaseSnapshot.players || {};
+  // Use the player keys as they were at game-start order, falling back to
+  // current players map if those aren't available.
+  const keys = Object.keys(players).sort();
+  if (keys.length === 0) {
+    container.hidden = true;
+    container.innerHTML = '';
+    return;
+  }
+  container.hidden = false;
+  container.innerHTML = '';
+  keys.forEach((k) => {
+    const p = players[k] || {};
+    const idx = parseInt(k.replace('player_', ''), 10);
+    const r = ready[k];
+    const dotEl = document.createElement('div');
+    dotEl.className = 'ready-dot';
+    if (r === true) dotEl.classList.add('ready');
+    else if (r === 'left') dotEl.classList.add('left');
+    const circle = document.createElement('div');
+    circle.className = 'dot';
+    const label = document.createElement('span');
+    label.className = 'dot-name';
+    label.textContent = `${p.emoji || ''} ${p.name || `P${idx + 1}`}`.trim();
+    dotEl.appendChild(circle);
+    dotEl.appendChild(label);
+    container.appendChild(dotEl);
+  });
 }
 
 /* ======= CLEANUP ======= */

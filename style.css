@@ -583,6 +583,54 @@ body[data-mode="tv"] #tv-create { justify-content: center; }
 }
 .tv-results-actions { display: flex; gap: 12px; }
 
+/* Ready indicators (shared by phone + TV results) — circle per player.
+ * Green = clicked Play Again (ready), Red = clicked Home (left). */
+.ready-indicators {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 8px 0;
+  width: 100%;
+  max-width: 560px;
+}
+.ready-indicators[hidden] { display: none !important; }
+.ready-dot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+}
+.ready-dot .dot {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid rgba(255,255,255,0.3);
+  background: transparent;
+  transition: background 0.3s, border-color 0.3s;
+}
+.ready-dot.ready .dot {
+  background: #2ecc71;
+  border-color: #2ecc71;
+}
+.ready-dot.left .dot {
+  background: #e74c3c;
+  border-color: #e74c3c;
+}
+.ready-dot .dot-name {
+  font-size: 0.7rem;
+  opacity: 0.85;
+  max-width: 64px;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* TV-mode circles slightly larger so they're readable across the room. */
+body[data-mode="tv"] .ready-dot .dot { width: 28px; height: 28px; }
+body[data-mode="tv"] .ready-dot .dot-name { font-size: 0.85rem; max-width: 90px; }
+
 /* =========================================================
    PHONE MODE — portrait, mobile-first
    ========================================================= */
