@@ -988,4 +988,15 @@ body[data-mode="phone"] .screen { max-width: 480px; margin: 0 auto; }
   /* Hide player columns on phone-host — host can see player count from
    * the lobby, and full names appear on the results screen. */
   body[data-mode="tv"] .tv-players-side { display: none; }
+
+  /* Phone-host called grid stays 3×30. Center it and squeeze the gap so
+   * all 30 columns actually fit inside the viewport without clipping. */
+  body[data-mode="tv"] .tv-called-grid {
+    gap: 1px;
+    padding: 4px;
+    margin: 0 auto;
+  }
+  body[data-mode="tv"] .tv-called-grid .called-cell {
+    font-size: clamp(0.45rem, 1.5vw, 0.7rem);
+  }
 }
