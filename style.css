@@ -964,7 +964,7 @@ body[data-mode="phone"] .screen { max-width: 480px; margin: 0 auto; }
 .phone-results-actions { display: flex; gap: 10px; }
 .phone-results-actions .btn { max-width: 140px; }
 
-/* ======= SMALL SCREENS (TV-mode unsupported) ======= */
+/* ======= SMALL SCREENS — phone-as-host fallback ======= */
 @media (max-width: 700px) {
   body[data-mode="tv"] .tv-lobby-body {
     grid-template-columns: 1fr;
@@ -973,4 +973,19 @@ body[data-mode="phone"] .screen { max-width: 480px; margin: 0 auto; }
     grid-template-columns: 1fr;
   }
   body[data-mode="tv"] .tv-controls .btn { width: 100%; max-width: 100%; }
+
+  /* Cap the ball at viewport width so it doesn't blow out the grid track
+   * and push every other row off-screen. min(80vw, 60svh) keeps the ball
+   * proportional in both portrait and landscape. */
+  body[data-mode="tv"] .tv-caller-ball {
+    width: min(80vw, 60svh);
+    height: min(80vw, 60svh);
+  }
+  body[data-mode="tv"] .tv-current-number {
+    font-size: calc(min(80vw, 60svh) * 0.22);
+  }
+
+  /* Hide player columns on phone-host — host can see player count from
+   * the lobby, and full names appear on the results screen. */
+  body[data-mode="tv"] .tv-players-side { display: none; }
 }
