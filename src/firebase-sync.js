@@ -95,11 +95,24 @@ export async function joinRoomAsPlayer(roomCode, playerName, playerEmoji) {
   if (data.meta?.status === 'ended') return { success: false, reason: 'Room has ended' };
 
   const players = data.players || {};
-  const existingIndices = Object.keys(players)
+  // A "ghost" slot is one with no name (only a leftover `connected:false`
+  // written by a stale onDisconnect after the player tapped Leave). Filter
+  // them from the index calculation and clean them up so the lobby doesn't
+  // show empty cards.
+  const ghostKeys = Object.keys(players).filter((k) => !players[k] || !players[k].name);
+  const validKeys = Object.keys(players).filter((k) => players[k] && players[k].name);
+  const existingIndices = validKeys
     .map((k) => parseInt(k.replace('player_', ''), 10))
     .filter((n) => !isNaN(n));
   if (existingIndices.length >= MAX_PLAYERS) {
     return { success: false, reason: `Room is full (${MAX_PLAYERS})` };
+  }
+  if (ghostKeys.length > 0) {
+    try {
+      const cleanup = {};
+      ghostKeys.forEach((k) => { cleanup[`players/${k}`] = null; });
+      await update(ref(db, `${ROOM_PATH}/${roomCode}`), cleanup);
+    } catch (_) {}
   }
   const nextIndex = existingIndices.length > 0 ? Math.max(...existingIndices) + 1 : 0;
   const uid = auth.currentUser?.uid || 'anonymous';
@@ -291,6 +304,10 @@ export async function submitClaimRequest(roomCode, playerIndex, pattern) {
 }
 
 export async function leaveRoom(roomCode, playerIndex) {
+  // Cancel the queued onDisconnect first to avoid a ghost player_N slot
+  // being recreated when the page closes.
+  const connectedRef = ref(db, `${ROOM_PATH}/${roomCode}/players/player_${playerIndex}/connected`);
+  try { await onDisconnect(connectedRef).cancel(); } catch (_) {}
   await firebaseRetry(() =>
     remove(ref(db, `${ROOM_PATH}/${roomCode}/players/player_${playerIndex}`))
   );

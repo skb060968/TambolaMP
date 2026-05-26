@@ -247,7 +247,10 @@ function renderLobbyUi() {
   const list = document.getElementById('tv-lobby-players');
   if (!list) return;
   const players = firebaseSnapshot.players || {};
-  const keys = Object.keys(players).sort();
+  // Skip ghost slots (no name) — leftover from a stale onDisconnect after
+  // a player tapped Leave; cleaned up on next join, but we filter here so
+  // they don't render in the meantime.
+  const keys = Object.keys(players).filter((k) => players[k] && players[k].name).sort();
   list.innerHTML = '';
   if (keys.length === 0) {
     const empty = document.createElement('li');
@@ -599,7 +602,7 @@ function renderTvReadyIndicators() {
   if (!container) return;
   const ready = firebaseSnapshot.ready || {};
   const players = firebaseSnapshot.players || {};
-  const keys = Object.keys(players).sort();
+  const keys = Object.keys(players).filter((k) => players[k] && players[k].name).sort();
   if (keys.length === 0) {
     container.hidden = true;
     container.innerHTML = '';
