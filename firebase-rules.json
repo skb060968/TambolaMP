@@ -201,6 +201,60 @@
         },
         "ready": { ".validate": true }
       }
+    },
+    "roulette-rooms": {
+      "$roomCode": {
+        ".read": "auth != null",
+        ".write": "auth != null",
+        "meta": {
+          "host": {
+            "name": { ".validate": "newData.isString() && newData.val().length <= 14" },
+            "emoji": { ".validate": "newData.isString()" },
+            "uid": { ".validate": "newData.isString()" },
+            "connected": { ".validate": "newData.isBoolean()" }
+          },
+          "status": { ".validate": "newData.isString() && (newData.val() === 'lobby' || newData.val() === 'betting' || newData.val() === 'spinning' || newData.val() === 'payout' || newData.val() === 'ended')" },
+          "createdAt": { ".validate": "newData.isNumber()" },
+          "updatedAt": { ".validate": "newData.isNumber()" }
+        },
+        "players": {
+          "$playerId": {
+            "name": { ".validate": "newData.isString() && newData.val().length <= 14" },
+            "emoji": { ".validate": "newData.isString()" },
+            "uid": { ".validate": "newData.isString()" },
+            "connected": { ".validate": "newData.isBoolean()" },
+            "chips": { ".validate": "newData.isNumber() && newData.val() >= 0" },
+            "broke": { ".validate": "newData.isBoolean()" }
+          }
+        },
+        "bets": {
+          "$playerId": {
+            "$betKey": {
+              "type": { ".validate": "newData.isString()" },
+              "target": { ".validate": "newData.val() === null || (newData.isNumber() && newData.val() >= 0 && newData.val() <= 36)" },
+              "chips": { ".validate": "newData.isNumber() && newData.val() >= 0" }
+            }
+          }
+        },
+        "wheel": {
+          "spinning": { ".validate": "newData.isBoolean()" },
+          "winningNumber": { ".validate": "newData.val() === null || (newData.isNumber() && newData.val() >= 0 && newData.val() <= 36)" },
+          "spinStartedAt": { ".validate": "newData.isNumber()" }
+        },
+        "game": {
+          "roundNumber": { ".validate": "newData.isNumber() && newData.val() >= 0" },
+          "betsCloseAt": { ".validate": "newData.val() === null || newData.isNumber()" },
+          "autoCloseSeconds": { ".validate": "newData.val() === null || newData.isNumber()" },
+          "lastResults": { ".validate": true }
+        },
+        "payouts": {
+          "$playerId": {
+            "wonChips": { ".validate": "newData.isNumber()" },
+            "betAmount": { ".validate": "newData.isNumber()" },
+            "netDelta": { ".validate": "newData.isNumber()" }
+          }
+        }
+      }
     }
   }
 }
