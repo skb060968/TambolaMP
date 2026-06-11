@@ -42,10 +42,10 @@ import { ref, get } from 'firebase/database';
 
 /* Prize values per pattern. Awarded to the first valid claimer. */
 const PATTERN_PRIZES = {
-  [PATTERNS.topLine]:    20,
-  [PATTERNS.middleLine]: 20,
-  [PATTERNS.bottomLine]: 20,
-  [PATTERNS.corners]:    15,
+  [PATTERNS.topLine]:    25,
+  [PATTERNS.middleLine]: 25,
+  [PATTERNS.bottomLine]: 25,
+  [PATTERNS.corners]:    25,
   [PATTERNS.fullHouse]:  100,
 };
 
