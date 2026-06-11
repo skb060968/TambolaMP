@@ -451,7 +451,7 @@ function toggleAutoCall() {
     stopAutoCall();
   } else {
     const speedSel = document.getElementById('tv-auto-speed');
-    const speed = speedSel ? parseInt(speedSel.value, 10) : 5;
+    const speed = speedSel ? parseInt(speedSel.value, 10) : 3;
     startAutoCall(speed);
   }
 }
