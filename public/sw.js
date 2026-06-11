@@ -4,7 +4,7 @@
    - Cache-first for static assets (images, sounds, icons)
    ============================== */
 
-const CACHE_NAME = "tambola-mp-v20";
+const CACHE_NAME = "tambola-mp-v21";
 
 const STATIC_ASSETS = [
   "/",

@@ -46,7 +46,7 @@ const PATTERN_PRIZES = {
   [PATTERNS.middleLine]: 20,
   [PATTERNS.bottomLine]: 20,
   [PATTERNS.corners]:    15,
-  [PATTERNS.fullHouse]:  50,
+  [PATTERNS.fullHouse]:  100,
 };
 
 const SESSION_KEY = 'tambola_mp_session';
