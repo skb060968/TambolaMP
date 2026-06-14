@@ -10,6 +10,7 @@ import './firebase-config.js';
 import { showScreen } from './platform-ui.js';
 import { startTvFlow, resumeTvSession } from './tv-controller.js';
 import { startPhoneFlow, resumePhoneSession } from './phone-controller.js';
+import { initDeepLinkHandler } from './deep-link-handler.js';
 
 const SESSION_KEY = 'tambola_mp_session';
 
@@ -26,6 +27,19 @@ function getQueryParam(name) {
 }
 
 async function init() {
+  // Check for deep link with room code
+  const deepLinkRoomCode = initDeepLinkHandler({
+    roomInputId: 'phone-join-code',
+    joinScreenId: 'phone-join',
+    gameName: 'Tambola MP'
+  });
+  
+  // If deep link present, start phone flow and return
+  if (deepLinkRoomCode) {
+    startPhoneFlow(deepLinkRoomCode);
+    return;
+  }
+  
   // Wire the home screen buttons.
   const btnTv = document.getElementById('btn-home-tv');
   const btnPlayer = document.getElementById('btn-home-player');
@@ -35,8 +49,7 @@ async function init() {
     startPhoneFlow(code);
   });
 
-  // If a code is present in the URL, hint to the user that they probably
-  // want to join as a player. We auto-route to the phone-join form.
+  // Legacy support: If a code is present in the URL with action=join
   const queryCode = getQueryParam('code');
   const action = getQueryParam('action');
   if (queryCode && action === 'join') {
