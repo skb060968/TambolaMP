@@ -315,7 +315,16 @@ async function startRound() {
     showToast('Need at least one player to start.');
     return;
   }
-  const playerKeys = Object.keys(firebaseSnapshot.players).sort();
+  // Skip ghost slots (no name) — same filter as renderLobbyUi
+  const playerKeys = Object.keys(firebaseSnapshot.players)
+    .filter((k) => firebaseSnapshot.players[k] && firebaseSnapshot.players[k].name)
+    .sort();
+  
+  if (playerKeys.length === 0) {
+    showToast('Need at least one player to start.');
+    return;
+  }
+  
   playerKeysSorted = playerKeys;
   const tickets = generateTickets(playerKeys.length);
   // Build local engine state.
