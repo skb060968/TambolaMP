@@ -37,7 +37,7 @@ import {
   initAudio, playSound, speakNumber, isMuted, toggleMute,
 } from './sound-manager.js';
 import { showScreen, showToast, confirmModal } from './platform-ui.js';
-import { createShareHandler } from './deep-link-handler.js';
+import { createShareHandler, showQRCode } from './deep-link-handler.js';
 import { db } from './firebase-config.js';
 import { ref, get } from 'firebase/database';
 
@@ -285,6 +285,13 @@ function wireTvLobby() {
   const shareBtn = document.getElementById('btn-tv-share-code');
   if (shareBtn) {
     shareBtn.addEventListener('click', createShareHandler(roomCode, 'Tambola MP'));
+  }
+  
+  const qrBtn = document.getElementById('btn-tv-qr-code');
+  if (qrBtn) {
+    qrBtn.addEventListener('click', () => {
+      if (roomCode) showQRCode(roomCode, 'Tambola MP');
+    });
   }
 
   const closeBtn = document.getElementById('btn-tv-lobby-close');
