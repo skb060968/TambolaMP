@@ -315,7 +315,8 @@ async function startRound() {
     showToast('Need at least one player to start.');
     return;
   }
-  // Skip ghost slots (no name) — same filter as renderLobbyUi
+  // Get all player keys (including temporarily disconnected ones)
+  // We generate tickets for ALL players who joined, regardless of current connection status
   const playerKeys = Object.keys(firebaseSnapshot.players)
     .filter((k) => firebaseSnapshot.players[k] && firebaseSnapshot.players[k].name)
     .sort();

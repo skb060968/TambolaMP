@@ -11,8 +11,10 @@
 import {
   joinRoomAsPlayer, listenRoom, setupPlayerDisconnectHandler,
   writePlayerMarks, submitClaimRequest, leaveRoom, setReady,
-  rejoinRoom, MAX_PLAYERS,
+  rejoinRoom, MAX_PLAYERS, firebaseRetry,
 } from './firebase-sync.js';
+import { db } from './firebase-config.js';
+import { ref, get } from 'firebase/database';
 import { deserializeTicket } from './ticket-generator.js';
 import { PATTERNS, PATTERN_LABELS } from './claim-validator.js';
 import {
@@ -56,6 +58,55 @@ function setAutoCut(v) {
   try { localStorage.setItem(AUTOCUT_KEY, v ? '1' : '0'); } catch (_) {}
 }
 
+/* ======= INITIAL SNAPSHOT LOADER ======= */
+/**
+ * Load initial room snapshot when rejoining an active game.
+ * This ensures disconnected players get their tickets when they reconnect,
+ * even if the onTicketsChange listener doesn't fire (because tickets haven't
+ * changed since they were originally assigned).
+ */
+async function loadInitialGameSnapshot(roomCode) {
+  try {
+    const snap = await firebaseRetry(() => get(ref(db, `tambola-mp-rooms/${roomCode}`)));
+    if (!snap.exists()) return;
+    const data = snap.val();
+    
+    // Populate firebaseSnapshot with initial data
+    firebaseSnapshot.meta = data.meta || {};
+    firebaseSnapshot.players = data.players || {};
+    firebaseSnapshot.tickets = data.tickets || {};
+    firebaseSnapshot.game = data.game || {};
+    firebaseSnapshot.marks = data.marks || {};
+    firebaseSnapshot.claimResults = data.claimResults || {};
+    firebaseSnapshot.ready = data.ready || {};
+    
+    // Load my ticket if it exists
+    const myKey = `player_${playerIndex}`;
+    if (data.tickets && data.tickets[myKey]) {
+      myTicket = deserializeTicket(data.tickets[myKey]);
+      renderPhoneTicket();
+      renderPhonePlayerTag();
+    }
+    
+    // Load drawn numbers and marks
+    if (data.game) {
+      const drawn = data.game.drawnNumbers || [];
+      calledSet = new Set(drawn);
+      lastCalled = data.game.currentNumber;
+      renderCalledBadge();
+      renderClaimButtons();
+    }
+    
+    // Load my marks from Firebase
+    if (data.marks && data.marks[myKey]) {
+      myMarks = new Set(data.marks[myKey]);
+      renderPhoneTicket();
+    }
+  } catch (err) {
+    console.warn('loadInitialGameSnapshot failed:', err.message);
+  }
+}
+
 /* ======= ENTRY ======= */
 export function startPhoneFlow(prefilledCode) {
   document.body.dataset.mode = 'phone';
@@ -83,6 +134,12 @@ export async function resumePhoneSession(savedRoomCode, savedPlayerIndex) {
     return;
   }
   setupPlayerDisconnectHandler(roomCode, playerIndex);
+  
+  // If rejoining an active game, load the initial snapshot to populate ticket and game state
+  if (result.status === 'active') {
+    await loadInitialGameSnapshot(savedRoomCode);
+  }
+  
   attachRoomListener();
   if (result.status === 'lobby') showScreen('phone-lobby');
   else if (result.status === 'active') showScreen('phone-game');
