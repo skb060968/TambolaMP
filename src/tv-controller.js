@@ -25,6 +25,7 @@ import {
   clearClaimRequest,
   rejoinRoom,
   firebaseRetry,
+  removePlayer,
   MAX_PLAYERS,
 } from './firebase-sync.js';
 import { generateTickets, deserializeTicket } from './ticket-generator.js';
@@ -263,7 +264,40 @@ function renderLobbyUi() {
       const p = players[k] || {};
       const li = document.createElement('li');
       li.className = 'tv-lobby-player';
-      li.innerHTML = `<span class="emoji">${escapeHtml(p.emoji || '😀')}</span><span class="name">${escapeHtml(p.name || 'Player')}</span>`;
+      
+      const emojiSpan = document.createElement('span');
+      emojiSpan.className = 'emoji';
+      emojiSpan.textContent = p.emoji || '😀';
+      
+      const nameSpan = document.createElement('span');
+      nameSpan.className = 'name';
+      nameSpan.textContent = p.name || 'Player';
+      
+      li.appendChild(emojiSpan);
+      li.appendChild(nameSpan);
+      
+      // Add remove button for TV host
+      const removeBtn = document.createElement('button');
+      removeBtn.className = 'remove-player-btn';
+      removeBtn.textContent = '✕';
+      removeBtn.title = 'Remove player';
+      removeBtn.addEventListener('click', async () => {
+        if (!roomCode) return;
+        const playerIndex = parseInt(k.replace('player_', ''), 10);
+        if (isNaN(playerIndex)) return;
+        
+        removeBtn.disabled = true;
+        try {
+          await removePlayer(roomCode, playerIndex);
+          showToast(`${p.name} removed from room`);
+        } catch (err) {
+          console.error('Failed to remove player:', err);
+          showToast('Failed to remove player');
+          removeBtn.disabled = false;
+        }
+      });
+      li.appendChild(removeBtn);
+      
       if (!p.connected) li.classList.add('disconnected');
       list.appendChild(li);
     });
