@@ -245,6 +245,23 @@ function attachRoomListener() {
         myTicket = deserializeTicket(tickets[myKey]);
         renderPhoneTicket();
         renderPhonePlayerTag();
+        
+        // Auto-cut any already-drawn numbers when ticket loads (handles reconnect case)
+        if (getAutoCut() && myTicket && calledSet.size > 0) {
+          const flat = myTicket.flat();
+          let autoCutCount = 0;
+          calledSet.forEach((num) => {
+            if (flat.includes(num) && !myMarks.has(num)) {
+              myMarks.add(num);
+              autoCutCount++;
+            }
+          });
+          if (autoCutCount > 0) {
+            persistMarks();
+            renderPhoneTicket();
+          }
+        }
+        
         if (firebaseSnapshot.meta?.status === 'active') {
           showScreen('phone-game');
         }
@@ -254,22 +271,35 @@ function attachRoomListener() {
       firebaseSnapshot.game = game;
       const newDrawn = game.drawnNumbers || [];
       const previousLast = lastCalled;
+      const oldCalledSet = new Set(calledSet);
       calledSet = new Set(newDrawn);
       const drawnNum = game.currentNumber;
       lastCalled = drawnNum;
-      if (drawnNum != null && drawnNum !== previousLast) {
-        // A new draw arrived — chime + maybe auto-strike
-        playSound('draw', 0.4);
-        if (getAutoCut() && myTicket) {
-          const flat = myTicket.flat();
-          if (flat.includes(drawnNum)) {
-            myMarks.add(drawnNum);
-            persistMarks();
-            renderPhoneTicket();
-            playSound('mark', 0.4);
+      
+      // Check if we have auto-cut enabled and a ticket
+      if (getAutoCut() && myTicket) {
+        const flat = myTicket.flat();
+        // Auto-cut any NEW numbers that weren't in the old set (handles missed updates)
+        let autoCutCount = 0;
+        calledSet.forEach((num) => {
+          if (!oldCalledSet.has(num) && flat.includes(num) && !myMarks.has(num)) {
+            myMarks.add(num);
+            autoCutCount++;
           }
+        });
+        
+        if (autoCutCount > 0) {
+          persistMarks();
+          renderPhoneTicket();
+          playSound('mark', 0.4);
         }
       }
+      
+      if (drawnNum != null && drawnNum !== previousLast) {
+        // A new draw arrived — chime
+        playSound('draw', 0.4);
+      }
+      
       renderCalledBadge();
       renderPhoneTicket();
       renderClaimButtons();
