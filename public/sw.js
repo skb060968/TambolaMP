@@ -4,7 +4,7 @@
    - Cache-first for static assets (images, sounds, icons)
    ============================== */
 
-const CACHE_NAME = "tambola-mp-v29";
+const CACHE_NAME = "tambola-mp-v30";
 
 const STATIC_ASSETS = [
   "/",
@@ -20,6 +20,7 @@ const STATIC_ASSETS = [
   "/sounds/win.mp3",
   "/sounds/error.mp3",
   "/sounds/claim.mp3",
+  "/sounds/music.mp3",
   ...Array.from({ length: 90 }, (_, i) => `/sounds/numbers/${i + 1}.mp3`),
 ];
 

@@ -25,6 +25,7 @@ const SOUND_FILES = {
   win: '/sounds/win.mp3',
   error: '/sounds/error.mp3',
   claim: '/sounds/claim.mp3',
+  music: '/sounds/music.mp3',
 };
 
 const MUTE_KEY = 'tambola_mp_muted';
@@ -215,4 +216,88 @@ export function speakNumber(n) {
     a.volume = 1;
     a.play().catch(() => {});
   } catch (_) {}
+}
+
+/* ======= BACKGROUND MUSIC ======= */
+
+let bgMusicAudio = null;
+
+/**
+ * Starts looping background music at specified volume (0.0 - 1.0).
+ * Uses HTML Audio element for reliable looping across all platforms.
+ */
+export function startBackgroundMusic(volume = 0.15) {
+  if (isMuted()) return;
+  
+  // Stop any existing music first
+  stopBackgroundMusic();
+  
+  const url = SOUND_FILES.music;
+  if (!url) return;
+  
+  try {
+    bgMusicAudio = new Audio(url);
+    bgMusicAudio.loop = true;
+    bgMusicAudio.volume = volume;
+    bgMusicAudio.preload = 'auto';
+    
+    const playPromise = bgMusicAudio.play();
+    if (playPromise && typeof playPromise.catch === 'function') {
+      playPromise.catch(() => {
+        // If autoplay is blocked, music will start on next user interaction
+        console.log('Background music autoplay blocked - will start on next interaction');
+      });
+    }
+  } catch (err) {
+    console.error('Failed to start background music:', err);
+  }
+}
+
+/**
+ * Stops the background music.
+ */
+export function stopBackgroundMusic() {
+  if (bgMusicAudio) {
+    try {
+      bgMusicAudio.pause();
+      bgMusicAudio.currentTime = 0;
+      bgMusicAudio = null;
+    } catch (_) {}
+  }
+}
+
+/**
+ * Sets background music volume (0.0 - 1.0).
+ */
+export function setBackgroundMusicVolume(volume) {
+  if (bgMusicAudio) {
+    try {
+      bgMusicAudio.volume = Math.max(0, Math.min(1, volume));
+    } catch (_) {}
+  }
+}
+
+/**
+ * Pauses background music (can be resumed).
+ */
+export function pauseBackgroundMusic() {
+  if (bgMusicAudio) {
+    try {
+      bgMusicAudio.pause();
+    } catch (_) {}
+  }
+}
+
+/**
+ * Resumes paused background music.
+ */
+export function resumeBackgroundMusic() {
+  if (bgMusicAudio && bgMusicAudio.paused && !isMuted()) {
+    try {
+      const playPromise = bgMusicAudio.play();
+      if (playPromise && typeof playPromise.catch === 'function') {
+        playPromise.catch(() => {});
+      }
+    } catch (_) {}
+  }
 }

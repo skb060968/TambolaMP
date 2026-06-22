@@ -36,6 +36,7 @@ import { PATTERNS, PATTERN_LABELS } from './claim-validator.js';
 
 import {
   initAudio, playSound, speakNumber, isMuted, toggleMute,
+  startBackgroundMusic, stopBackgroundMusic,
 } from './sound-manager.js';
 import { showScreen, showToast, confirmModal } from './platform-ui.js';
 import { createShareHandler, showQRCode } from './deep-link-handler.js';
@@ -390,6 +391,8 @@ function setupGameUi() {
   // Reset banner area
   const banner = document.getElementById('tv-winner-banner');
   if (banner) banner.classList.remove('show');
+  // Start background music at 15% volume
+  startBackgroundMusic(0.15);
 }
 
 /**
@@ -752,6 +755,7 @@ function wireTvResults() {
 /* ======= CLEANUP ======= */
 function cleanupAndGoHome() {
   stopAutoCall();
+  stopBackgroundMusic();
   if (unsubscribe) { unsubscribe(); unsubscribe = null; }
   clearSession();
   roomCode = null;
