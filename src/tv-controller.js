@@ -412,11 +412,21 @@ function renderPlayersSides() {
     const slice = state.playerInfos.slice(fromIdx, toIdx);
     el.innerHTML = '';
     el.classList.toggle('cols-2', slice.length > 10);
+    
+    // BUGFIX: Get current player keys from Firebase snapshot
+    const currentPlayerKeys = Object.keys(firebaseSnapshot.players || {}).sort();
+    
     slice.forEach((info, localI) => {
       const idx = fromIdx + localI;
       const ticket = state.tickets[idx];
       const total15 = ticket.flat().filter((v) => v > 0).length;
-      const key = playerKeysSorted[idx] || `player_${idx}`;
+      
+      // Try to find matching player key by index
+      const key = currentPlayerKeys.find(k => {
+        const keyIdx = parseInt(k.replace('player_', ''), 10);
+        return keyIdx === idx;
+      }) || `player_${idx}`;
+      
       const struck = (marks[key] || []).filter((n) => state.drawnNumbers.includes(n)).length;
       const uncut = total15 - struck;
       const card = document.createElement('div');
@@ -590,15 +600,44 @@ async function processClaimRequests(requests) {
     const req = requests[id];
     if (!req) continue;
     const { pattern, playerIndex } = req;
-    const playerKey = playerKeysSorted[playerIndex];
+    
+    // BUGFIX: Rebuild playerKeysSorted from current Firebase snapshot
+    // to handle removed/rejoined players correctly
+    const currentPlayerKeys = Object.keys(firebaseSnapshot.players || {}).sort();
+    
+    // Find the actual playerKey by matching the playerIndex
+    // playerIndex comes from phone which knows its own slot
+    const playerKey = currentPlayerKeys.find(k => {
+      const idx = parseInt(k.replace('player_', ''), 10);
+      return idx === playerIndex;
+    });
+    
+    if (!playerKey) {
+      console.warn(`No playerKey found for playerIndex ${playerIndex}`);
+      await writeClaimRejected(roomCode, id, 'Player not found');
+      await clearClaimRequest(roomCode, id);
+      continue;
+    }
+    
     const marksArr = (firebaseSnapshot.marks || {})[playerKey] || [];
     const markedSet = new Set(marksArr);
-    const result = evaluateClaim(state, playerIndex, markedSet, pattern);
+    
+    // Find the array index in playerKeysSorted (where the ticket is stored)
+    const stateArrayIndex = playerKeysSorted.indexOf(playerKey);
+    
+    if (stateArrayIndex === -1) {
+      console.warn(`PlayerKey ${playerKey} not found in playerKeysSorted`);
+      await writeClaimRejected(roomCode, id, 'Player ticket not found');
+      await clearClaimRequest(roomCode, id);
+      continue;
+    }
+    
+    const result = evaluateClaim(state, stateArrayIndex, markedSet, pattern);
     if (result.valid) {
-      const playerInfo = state.playerInfos[playerIndex] || { name: 'Player', emoji: '😀' };
-      state = awardClaim(state, pattern, playerIndex, playerInfo.name);
+      const playerInfo = state.playerInfos[stateArrayIndex] || { name: 'Player', emoji: '😀' };
+      state = awardClaim(state, pattern, stateArrayIndex, playerInfo.name);
       await writeClaimWin(roomCode, pattern, {
-        winner: playerIndex,
+        winner: stateArrayIndex,
         wonAt: Date.now(),
         playerName: playerInfo.name,
         patternLabel: PATTERN_LABELS[pattern],
