@@ -618,7 +618,7 @@ function renderPhoneResults() {
 
   // Same prize map the TV uses (kept in sync — change one, change the other).
   const PHONE_PRIZES = {
-    topLine: 20, middleLine: 20, bottomLine: 20, corners: 15, fullHouse: 50,
+    topLine: 25, middleLine: 25, bottomLine: 25, corners: 25, fullHouse: 100,
   };
 
   // Track totals for the prize summary.
