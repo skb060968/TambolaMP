@@ -23,3 +23,6 @@ Thumbs.db
 
 *.backup
 *.bak
+
+# Firebase rules shared across all projects
+firebase-rules.json
