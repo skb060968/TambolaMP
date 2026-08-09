@@ -16,7 +16,7 @@ import {
 import { deserializeTicket } from './ticket-generator.js';
 import { PATTERNS, PATTERN_LABELS } from './claim-validator.js';
 import {
-  initAudio, playSound, isMuted, toggleMute,
+  initAudio, playSound, speakNumber, isMuted, toggleMute,
 } from './sound-manager.js';
 import { showScreen, showToast } from './platform-ui.js';
 
@@ -275,8 +275,9 @@ function attachRoomListener() {
       }
       
       if (drawnNum != null && drawnNum !== previousLast) {
-        // A new draw arrived — chime
+        // A new draw arrived — chime and announce it on this player device.
         playSound('draw', 0.4);
+        speakNumber(drawnNum);
       }
       
       renderCalledBadge();

@@ -2,7 +2,7 @@
  * Sound Manager — Tambola MP
  *
  * Two roles:
- *   - phone: plays soft chimes for draw/mark/claim/win/error. Does NOT speak numbers.
+ *   - phone: plays soft chimes and speaks each newly called number.
  *   - display (TV): same chimes plus speakNumber for the called value.
  *
  * Uses AudioContext where available, falls back to HTML Audio.
@@ -127,7 +127,7 @@ export function initAudio(role) {
     if (!initialized) {
       initialized = true;
       preloadChimes();
-      if (role === 'display') preloadNumbers();
+      if (role === 'display' || role === 'phone') preloadNumbers();
     }
   };
   const events = ['click', 'touchstart', 'keydown'];
@@ -144,7 +144,10 @@ export function isMuted() {
 }
 
 export function setMuted(muted) {
-  try { localStorage.setItem(MUTE_KEY, muted ? '1' : '0'); } catch (_) {}
+  const next = Boolean(muted);
+  try { localStorage.setItem(MUTE_KEY, next ? '1' : '0'); } catch (_) {}
+  if (next) pauseBackgroundMusic();
+  else resumeBackgroundMusic();
 }
 
 export function toggleMute() {
@@ -190,7 +193,7 @@ export function playSound(name, volume = 1.0) {
 }
 
 /**
- * Speak a called number (TV/display only). Called numbers must use the
+ * Speak a called number on TV/display and player devices. Called numbers use the
  * AudioContext path on iPad because HTML Audio respects the silent switch.
  * @param {number} n  1..90
  */
@@ -221,16 +224,26 @@ export function speakNumber(n) {
 /* ======= BACKGROUND MUSIC ======= */
 
 let bgMusicAudio = null;
+let bgMusicWanted = false;
+let bgMusicVolume = 0.15;
 
 /**
  * Starts looping background music at specified volume (0.0 - 1.0).
  * Uses HTML Audio element for reliable looping across all platforms.
  */
 export function startBackgroundMusic(volume = 0.15) {
+  bgMusicWanted = true;
+  bgMusicVolume = Math.max(0, Math.min(1, volume));
+
+  // Replace any existing music without clearing the requested-play state.
+  if (bgMusicAudio) {
+    try {
+      bgMusicAudio.pause();
+      bgMusicAudio.currentTime = 0;
+    } catch (_) {}
+    bgMusicAudio = null;
+  }
   if (isMuted()) return;
-  
-  // Stop any existing music first
-  stopBackgroundMusic();
   
   const url = SOUND_FILES.music;
   if (!url) return;
@@ -238,7 +251,7 @@ export function startBackgroundMusic(volume = 0.15) {
   try {
     bgMusicAudio = new Audio(url);
     bgMusicAudio.loop = true;
-    bgMusicAudio.volume = volume;
+    bgMusicAudio.volume = bgMusicVolume;
     bgMusicAudio.preload = 'auto';
     
     const playPromise = bgMusicAudio.play();
@@ -257,6 +270,7 @@ export function startBackgroundMusic(volume = 0.15) {
  * Stops the background music.
  */
 export function stopBackgroundMusic() {
+  bgMusicWanted = false;
   if (bgMusicAudio) {
     try {
       bgMusicAudio.pause();
@@ -270,9 +284,10 @@ export function stopBackgroundMusic() {
  * Sets background music volume (0.0 - 1.0).
  */
 export function setBackgroundMusicVolume(volume) {
+  bgMusicVolume = Math.max(0, Math.min(1, volume));
   if (bgMusicAudio) {
     try {
-      bgMusicAudio.volume = Math.max(0, Math.min(1, volume));
+      bgMusicAudio.volume = bgMusicVolume;
     } catch (_) {}
   }
 }
@@ -292,7 +307,12 @@ export function pauseBackgroundMusic() {
  * Resumes paused background music.
  */
 export function resumeBackgroundMusic() {
-  if (bgMusicAudio && bgMusicAudio.paused && !isMuted()) {
+  if (!bgMusicWanted || isMuted()) return;
+  if (!bgMusicAudio) {
+    startBackgroundMusic(bgMusicVolume);
+    return;
+  }
+  if (bgMusicAudio.paused) {
     try {
       const playPromise = bgMusicAudio.play();
       if (playPromise && typeof playPromise.catch === 'function') {
