@@ -20,17 +20,15 @@ import {
   endGame as fbEndGame,
   resetRoom as fbResetRoom,
   deleteRoom as fbDeleteRoom,
-  writeClaimWin,
-  writeClaimRejected,
-  clearClaimRequest,
+  resolveClaimRequest,
   rejoinRoom,
-  firebaseRetry,
   removePlayer,
+  comparePlayerKeys,
   MAX_PLAYERS,
 } from './firebase-sync.js';
-import { generateTickets, deserializeTicket } from './ticket-generator.js';
+import { generateTickets } from './ticket-generator.js';
 import {
-  createGameState, drawNumber, awardClaim, evaluateClaim, getCalledSet, reconstructFromFirebase,
+  createGameState, drawNumber, awardClaim, evaluateClaim, reconstructFromFirebase,
 } from './game-engine.js';
 import { PATTERNS, PATTERN_LABELS } from './claim-validator.js';
 
@@ -40,8 +38,6 @@ import {
 } from './sound-manager.js';
 import { showScreen, showToast, confirmModal } from './platform-ui.js';
 import { createShareHandler, showQRCode } from './deep-link-handler.js';
-import { db } from './firebase-config.js';
-import { ref, get } from 'firebase/database';
 
 /* Prize values per pattern. Awarded to the first valid claimer. */
 const PATTERN_PRIZES = {
@@ -60,6 +56,7 @@ let state = null;                // TV's local authoritative game state
 let playerKeysSorted = [];       // ['player_0', 'player_1', ...]
 let firebaseSnapshot = {};       // most recent room snapshot for cross-references
 let _autoCallTimer = null;
+let _drawPending = false;
 let _processedRequests = new Set();
 let _resultsShown = false;
 
@@ -101,17 +98,9 @@ export async function resumeTvSession(savedRoomCode) {
     showScreen('home');
     return;
   }
-  setupTvDisconnectHandler(roomCode);
+  setupTvDisconnectHandler(roomCode).catch((error) => console.warn(error.message));
 
-  // Pull a fresh snapshot of the room and seed firebaseSnapshot before
-  // attaching the listener — otherwise the first listener fire would race
-  // with our reconstruct.
-  let snapshot = null;
-  try {
-    const snap = await firebaseRetry(() => get(ref(db, `tambola-mp-rooms/${savedRoomCode}`)));
-    if (snap.exists()) snapshot = snap.val();
-  } catch (_) {}
-
+  const snapshot = result.room || null;
   if (snapshot) {
     firebaseSnapshot = {
       meta: snapshot.meta,
@@ -120,10 +109,9 @@ export async function resumeTvSession(savedRoomCode) {
       game: snapshot.game || {},
       marks: snapshot.marks || {},
       claimRequests: snapshot.claimRequests || {},
+      ready: snapshot.ready || {},
     };
-    if (snapshot.players) {
-      playerKeysSorted = Object.keys(snapshot.players).sort();
-    }
+    playerKeysSorted = Object.keys(snapshot.players || {}).sort(comparePlayerKeys);
   }
 
   attachRoomListener();
@@ -167,7 +155,7 @@ function wireTvCreate() {
       const result = await createRoomAsTv('TV', '📺');
       roomCode = result.roomCode;
       saveSession();
-      setupTvDisconnectHandler(roomCode);
+      setupTvDisconnectHandler(roomCode).catch((error) => console.warn(error.message));
       attachRoomListener();
       setupLobbyUi();
       showScreen('tv-lobby');
@@ -250,10 +238,9 @@ function renderLobbyUi() {
   const list = document.getElementById('tv-lobby-players');
   if (!list) return;
   const players = firebaseSnapshot.players || {};
-  // Skip ghost slots (no name) — leftover from a stale onDisconnect after
-  // a player tapped Leave; cleaned up on next join, but we filter here so
-  // they don't render in the meantime.
-  const keys = Object.keys(players).filter((k) => players[k] && players[k].name).sort();
+  const keys = Object.keys(players)
+    .filter((key) => players[key]?.name)
+    .sort(comparePlayerKeys);
   list.innerHTML = '';
   if (keys.length === 0) {
     const empty = document.createElement('li');
@@ -353,34 +340,34 @@ function syncMuteUi() {
 
 /* ======= START ROUND ======= */
 async function startRound() {
-  if (!firebaseSnapshot.players || Object.keys(firebaseSnapshot.players).length === 0) {
-    showToast('Need at least one player to start.');
-    return;
-  }
-  // Get all player keys (including temporarily disconnected ones)
-  // We generate tickets for ALL players who joined, regardless of current connection status
-  const playerKeys = Object.keys(firebaseSnapshot.players)
-    .filter((k) => firebaseSnapshot.players[k] && firebaseSnapshot.players[k].name)
-    .sort();
-  
+  const playerKeys = Object.keys(firebaseSnapshot.players || {})
+    .filter((key) => firebaseSnapshot.players[key]?.name)
+    .sort(comparePlayerKeys);
   if (playerKeys.length === 0) {
     showToast('Need at least one player to start.');
     return;
   }
-  
-  playerKeysSorted = playerKeys;
-  const tickets = generateTickets(playerKeys.length);
-  // Build local engine state.
-  const playerInfos = playerKeys.map((k) => ({
-    name: firebaseSnapshot.players[k].name,
-    emoji: firebaseSnapshot.players[k].emoji,
-  }));
-  state = createGameState(tickets, playerInfos);
-  _resultsShown = false;
-  _processedRequests = new Set();
-  await fbStartGame(roomCode, tickets);
-  showScreen('tv-game');
-  setupGameUi();
+
+  const startButton = document.getElementById('btn-tv-start-round');
+  if (startButton) startButton.disabled = true;
+  try {
+    const tickets = generateTickets(playerKeys.length);
+    const playerInfos = playerKeys.map((key) => ({
+      name: firebaseSnapshot.players[key].name,
+      emoji: firebaseSnapshot.players[key].emoji,
+    }));
+    await fbStartGame(roomCode, tickets, playerKeys);
+    playerKeysSorted = playerKeys;
+    state = createGameState(tickets, playerInfos, playerKeys);
+    _resultsShown = false;
+    _processedRequests = new Set();
+    showScreen('tv-game');
+    setupGameUi();
+  } catch (error) {
+    console.warn('startGame failed:', error.message);
+    showToast('Players changed while starting. Please try again.');
+    if (startButton) startButton.disabled = false;
+  }
 }
 
 /* ======= GAME UI ======= */
@@ -413,21 +400,12 @@ function renderPlayersSides() {
     el.innerHTML = '';
     el.classList.toggle('cols-2', slice.length > 10);
     
-    // BUGFIX: Get current player keys from Firebase snapshot
-    const currentPlayerKeys = Object.keys(firebaseSnapshot.players || {}).sort();
-    
     slice.forEach((info, localI) => {
       const idx = fromIdx + localI;
       const ticket = state.tickets[idx];
-      const total15 = ticket.flat().filter((v) => v > 0).length;
-      
-      // Try to find matching player key by index
-      const key = currentPlayerKeys.find(k => {
-        const keyIdx = parseInt(k.replace('player_', ''), 10);
-        return keyIdx === idx;
-      }) || `player_${idx}`;
-      
-      const struck = (marks[key] || []).filter((n) => state.drawnNumbers.includes(n)).length;
+      const key = state.playerKeys[idx];
+      const total15 = ticket.flat().filter((value) => value > 0).length;
+      const struck = (marks[key] || []).filter((number) => state.drawnNumbers.includes(number)).length;
       const uncut = total15 - struck;
       const card = document.createElement('div');
       card.className = 'tv-player-card';
@@ -482,7 +460,7 @@ function wireTvGame() {
 }
 
 async function doDraw() {
-  if (!state || state.gameOver) return;
+  if (_drawPending || !state || state.gameOver) return;
   if (state.remainingPool.length === 0) {
     showToast('All numbers drawn.');
     stopAutoCall();
@@ -490,28 +468,29 @@ async function doDraw() {
   }
   const result = drawNumber(state);
   if (!result) return;
-  state = result.newState;
 
-  // Sequence the announcement so it feels like a real lottery:
-  //   t=0     ball pops / spins (number hidden), soft chime
-  //   t=700   ball settles, number reveals, speech plays, Firebase write
-  //           goes out → phones update grid + last-3 + auto-cut at the same
-  //           moment the TV reveals.
-  // Without this gating, phones strike the number on their tickets before
-  // the ball has even finished animating, which makes the ticket feel like
-  // it knows the next number ahead of time.
+  _drawPending = true;
+  const nextButton = document.getElementById('btn-tv-next');
+  if (nextButton) nextButton.disabled = true;
   playSound('draw', 0.5);
   animateBall(result.number);
 
   setTimeout(async () => {
-    speakNumber(result.number);
-    renderCallerUi();
-    renderCalledGrid();
-    renderPlayersSides();
     try {
-      await broadcastDraw(roomCode, state.drawnNumbers, result.number);
-    } catch (err) {
-      console.warn('broadcastDraw failed:', err.message);
+      await broadcastDraw(roomCode, result.newState.drawnNumbers, result.number);
+      state = result.newState;
+      speakNumber(result.number);
+      renderCallerUi();
+      renderCalledGrid();
+      renderPlayersSides();
+    } catch (error) {
+      console.warn('broadcastDraw failed:', error.message);
+      showToast('Draw was not saved. Please try again.');
+      renderCallerUi();
+      renderCalledGrid();
+    } finally {
+      _drawPending = false;
+      if (nextButton) nextButton.disabled = false;
     }
   }, 700);
 }
@@ -593,69 +572,57 @@ function animateBall(number) {
 /* ======= CLAIMS ======= */
 async function processClaimRequests(requests) {
   if (!state || !roomCode) return;
-  const ids = Object.keys(requests || {});
-  for (const id of ids) {
-    if (_processedRequests.has(id)) continue;
-    _processedRequests.add(id);
-    const req = requests[id];
-    if (!req) continue;
-    const { pattern, playerIndex } = req;
-    
-    // BUGFIX: Rebuild playerKeysSorted from current Firebase snapshot
-    // to handle removed/rejoined players correctly
-    const currentPlayerKeys = Object.keys(firebaseSnapshot.players || {}).sort();
-    
-    // Find the actual playerKey by matching the playerIndex
-    // playerIndex comes from phone which knows its own slot
-    const playerKey = currentPlayerKeys.find(k => {
-      const idx = parseInt(k.replace('player_', ''), 10);
-      return idx === playerIndex;
-    });
-    
-    if (!playerKey) {
-      console.warn(`No playerKey found for playerIndex ${playerIndex}`);
-      await writeClaimRejected(roomCode, id, 'Player not found');
-      await clearClaimRequest(roomCode, id);
-      continue;
-    }
-    
-    const marksArr = (firebaseSnapshot.marks || {})[playerKey] || [];
-    const markedSet = new Set(marksArr);
-    
-    // Find the array index in playerKeysSorted (where the ticket is stored)
-    const stateArrayIndex = playerKeysSorted.indexOf(playerKey);
-    
-    if (stateArrayIndex === -1) {
-      console.warn(`PlayerKey ${playerKey} not found in playerKeysSorted`);
-      await writeClaimRejected(roomCode, id, 'Player ticket not found');
-      await clearClaimRequest(roomCode, id);
-      continue;
-    }
-    
-    const result = evaluateClaim(state, stateArrayIndex, markedSet, pattern);
-    if (result.valid) {
+  for (const requestId of Object.keys(requests || {})) {
+    if (_processedRequests.has(requestId)) continue;
+    const request = requests[requestId];
+    if (!request) continue;
+
+    try {
+      const playerKey = request.playerKey || `player_${request.playerIndex}`;
+      const stateArrayIndex = state.playerKeys.indexOf(playerKey);
+      const player = firebaseSnapshot.players?.[playerKey];
+      if (stateArrayIndex < 0 || !player || player.uid !== request.uid) {
+        await resolveClaimRequest(roomCode, requestId, { valid: false, reason: 'Player ticket not found' });
+        _processedRequests.add(requestId);
+        continue;
+      }
+
+      const markedSet = new Set((firebaseSnapshot.marks || {})[playerKey] || []);
+      const result = evaluateClaim(state, stateArrayIndex, markedSet, request.pattern);
+      if (!result.valid) {
+        await resolveClaimRequest(roomCode, requestId, {
+          valid: false,
+          reason: result.reason || 'Invalid claim',
+        });
+        _processedRequests.add(requestId);
+        continue;
+      }
+
       const playerInfo = state.playerInfos[stateArrayIndex] || { name: 'Player', emoji: '😀' };
-      state = awardClaim(state, pattern, stateArrayIndex, playerInfo.name);
-      await writeClaimWin(roomCode, pattern, {
-        winner: stateArrayIndex,
-        wonAt: Date.now(),
+      const winner = Number.parseInt(playerKey.replace('player_', ''), 10);
+      const wonAt = Date.now();
+      await resolveClaimRequest(roomCode, requestId, {
+        valid: true,
+        winner,
+        winnerPlayerKey: playerKey,
+        wonAt,
         playerName: playerInfo.name,
-        patternLabel: PATTERN_LABELS[pattern],
+        patternLabel: PATTERN_LABELS[request.pattern],
       });
-      showWinnerBanner(playerInfo, pattern);
+      state = awardClaim(state, request.pattern, stateArrayIndex, playerInfo.name, playerKey);
+      _processedRequests.add(requestId);
+      showWinnerBanner(playerInfo, request.pattern);
       playSound('win');
       renderPlayersSides();
       if (state.gameOver) {
-        // Full House won — host should auto-end so phones see the
-        // results screen without anyone having to press "End".
         stopAutoCall();
         try { await fbEndGame(roomCode); } catch (_) {}
         setTimeout(() => handleRoundEnd(), 3500);
       }
-    } else {
-      await writeClaimRejected(roomCode, id, result.reason || 'Invalid claim');
+    } catch (error) {
+      console.warn('Claim resolution failed:', error.message);
+      setTimeout(() => processClaimRequests(firebaseSnapshot.claimRequests || {}), 1000);
     }
-    await clearClaimRequest(roomCode, id);
   }
 }
 
@@ -701,7 +668,9 @@ function renderTvReadyIndicators() {
   if (!container) return;
   const ready = firebaseSnapshot.ready || {};
   const players = firebaseSnapshot.players || {};
-  const keys = Object.keys(players).filter((k) => players[k] && players[k].name).sort();
+  const keys = Object.keys(players)
+    .filter((key) => players[key]?.name)
+    .sort(comparePlayerKeys);
   if (keys.length === 0) {
     container.hidden = true;
     container.innerHTML = '';
@@ -739,8 +708,10 @@ function renderResultsUi() {
     const prize = PATTERN_PRIZES[p] || 0;
     const li = document.createElement('li');
     if (c?.won) {
-      const name = c.playerName || (state.playerInfos[c.winner]?.name) || 'Player';
-      totals[c.winner] = (totals[c.winner] || 0) + prize;
+      const winnerKey = c.winnerPlayerKey || `player_${c.winner}`;
+      const winnerIndex = state.playerKeys.indexOf(winnerKey);
+      const name = c.playerName || state.playerInfos[winnerIndex]?.name || 'Player';
+      totals[winnerKey] = (totals[winnerKey] || 0) + prize;
       li.innerHTML = `<span class="rl-pat">${PATTERN_LABELS[p]}</span> <span class="rl-winner">🏆 ${escapeHtml(name)}</span> <span class="rl-prize">🪙 ${prize}</span>`;
     } else {
       li.innerHTML = `<span class="rl-pat">${PATTERN_LABELS[p]}</span> <span class="rl-winner muted">Unclaimed</span> <span class="rl-prize muted">🪙 ${prize}</span>`;
@@ -757,8 +728,9 @@ function renderResultsUi() {
       heading.className = 'tv-results-summary-heading';
       heading.textContent = '🏆 Prize Summary';
       summary.appendChild(heading);
-      entries.forEach(([idx, coins]) => {
-        const info = state.playerInfos[idx] || { name: 'Player', emoji: '😀' };
+      entries.forEach(([playerKey, coins]) => {
+        const playerStateIndex = state.playerKeys.indexOf(playerKey);
+        const info = state.playerInfos[playerStateIndex] || { name: 'Player', emoji: '😀' };
         const row = document.createElement('div');
         row.className = 'tv-results-total-row';
         row.innerHTML = `<span class="rl-emoji">${escapeHtml(info.emoji)}</span><span class="rl-name">${escapeHtml(info.name)}</span><span class="rl-total">🪙 ${coins}</span>`;

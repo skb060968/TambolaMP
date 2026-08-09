@@ -124,27 +124,70 @@ function distributeToRows(ticket, colNumbers, colCounts) {
   }
 }
 
+export function validateTicket(ticket) {
+  if (!Array.isArray(ticket) || ticket.length !== 3) return false;
+  const seen = new Set();
+  let total = 0;
+
+  for (const row of ticket) {
+    if (!Array.isArray(row) || row.length !== 9) return false;
+    let rowCount = 0;
+    for (const value of row) {
+      if (!Number.isSafeInteger(value) || value < 0 || value > 90) return false;
+      if (value > 0) {
+        rowCount++;
+        total++;
+        if (seen.has(value)) return false;
+        seen.add(value);
+      }
+    }
+    if (rowCount !== 5) return false;
+  }
+  if (total !== 15) return false;
+
+  for (let col = 0; col < 9; col++) {
+    const values = ticket.map((row) => row[col]).filter((value) => value > 0);
+    if (values.length < 1 || values.length > 3) return false;
+    const min = col === 0 ? 1 : col * 10;
+    const max = col === 8 ? 90 : (col * 10) + 9;
+    if (values.some((value) => value < min || value > max)) return false;
+    if (values.some((value, index) => index > 0 && value <= values[index - 1])) return false;
+  }
+  return true;
+}
+
 export function generateTickets(count) {
+  if (!Number.isSafeInteger(count) || count < 0 || count > 20) {
+    throw new Error('Ticket count must be between 0 and 20');
+  }
   const tickets = [];
   const seen = new Set();
   let attempts = 0;
-  const maxAttempts = count * 100;
+  const maxAttempts = Math.max(100, count * 100);
   while (tickets.length < count && attempts < maxAttempts) {
     attempts++;
     const ticket = generateTicket();
+    if (!validateTicket(ticket)) continue;
     const key = serializeTicket(ticket);
     if (!seen.has(key)) {
       seen.add(key);
       tickets.push(ticket);
     }
   }
+  if (tickets.length !== count) throw new Error('Unable to generate enough unique tickets');
   return tickets;
 }
 
 export function serializeTicket(ticket) {
+  if (!validateTicket(ticket)) throw new Error('Invalid Tambola ticket');
   return ticket.map((row) => row.join(',')).join(';');
 }
 
 export function deserializeTicket(str) {
-  return str.split(';').map((row) => row.split(',').map(Number));
+  if (typeof str !== 'string' || str.length < 53 || str.length > 120) {
+    throw new Error('Invalid serialized Tambola ticket');
+  }
+  const ticket = str.split(';').map((row) => row.split(',').map((value) => Number(value)));
+  if (!validateTicket(ticket)) throw new Error('Invalid serialized Tambola ticket');
+  return ticket;
 }

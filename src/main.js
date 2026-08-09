@@ -6,8 +6,8 @@
  * - Otherwise wires the home buttons to dispatch into the appropriate controller.
  */
 
-import './firebase-config.js';
-import { showScreen } from './platform-ui.js';
+import { authReady } from './firebase-config.js';
+import { showScreen, showToast } from './platform-ui.js';
 import { startTvFlow, resumeTvSession } from './tv-controller.js';
 import { startPhoneFlow, resumePhoneSession } from './phone-controller.js';
 import { initDeepLinkHandler } from './deep-link-handler.js';
@@ -27,6 +27,15 @@ function getQueryParam(name) {
 }
 
 async function init() {
+  showScreen('home');
+  try {
+    await authReady;
+  } catch (error) {
+    console.error('Startup authentication failed:', error);
+    showToast('Unable to connect securely. Check your internet connection and reload.');
+    return;
+  }
+
   // Check for deep link with room code
   const deepLinkRoomCode = initDeepLinkHandler({
     roomInputId: 'phone-join-code',
@@ -71,67 +80,51 @@ async function init() {
 }
 
 /* ======= SERVICE WORKER ======= */
-// Update notification functions
+let waitingWorker = null;
+let updateAccepted = false;
+
 window.reloadForUpdate = function() {
-  window.location.reload();
+  if (!waitingWorker) {
+    window.location.reload();
+    return;
+  }
+  updateAccepted = true;
+  waitingWorker.postMessage({ type: 'SKIP_WAITING' });
 };
 
 window.dismissUpdate = function() {
-  document.getElementById('updateToast').style.display = 'none';
+  const toast = document.getElementById('updateToast');
+  if (toast) toast.style.display = 'none';
 };
 
-function showUpdateToast() {
+function showUpdateToast(worker) {
+  waitingWorker = worker;
   const toast = document.getElementById('updateToast');
   if (!toast) return;
   toast.style.display = 'block';
   toast.style.animation = 'slideUp 0.4s ease-out';
 }
 
-// Register Service Worker for PWA with update detection
 if ('serviceWorker' in navigator) {
-  let refreshing = false;
-  
-  // Detect controller change and reload
   navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if (refreshing) return;
-    refreshing = true;
-    console.log('[App] Controller changed, reloading...');
+    if (updateAccepted) window.location.reload();
   });
-  
+
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js')
-      .then((registration) => {
-        console.log('✅ Service Worker registered:', registration);
-        
-        // Check for updates periodically (every 5 minutes)
-        setInterval(() => {
-          registration.update();
-        }, 5 * 60 * 1000);
-        
-        // Listen for waiting service worker
-        registration.addEventListener('updatefound', () => {
-          const newWorker = registration.installing;
-          console.log('[App] New service worker found');
-          
-          newWorker.addEventListener('statechange', () => {
-            if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-              console.log('[App] New service worker installed, update available');
-              showUpdateToast();
-            }
-          });
-        });
-      })
-      .catch((error) => {
-        console.log('❌ Service Worker registration failed:', error);
-      });
-    
-    // Listen for messages from service worker
-    navigator.serviceWorker.addEventListener('message', (event) => {
-      if (event.data && event.data.type === 'UPDATE_AVAILABLE') {
-        console.log(`[App] Update available: ${event.data.version}`);
-        showUpdateToast();
+    navigator.serviceWorker.register('/sw.js').then((registration) => {
+      if (registration.waiting && navigator.serviceWorker.controller) {
+        showUpdateToast(registration.waiting);
       }
-    });
+      registration.addEventListener('updatefound', () => {
+        const worker = registration.installing;
+        worker?.addEventListener('statechange', () => {
+          if (worker.state === 'installed' && navigator.serviceWorker.controller) {
+            showUpdateToast(worker);
+          }
+        });
+      });
+      setInterval(() => registration.update().catch(() => {}), 5 * 60 * 1000);
+    }).catch((error) => console.warn('Service Worker registration failed:', error));
   });
 }
 

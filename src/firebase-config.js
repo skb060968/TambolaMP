@@ -1,6 +1,6 @@
 import { initializeApp } from 'firebase/app';
 import { getDatabase } from 'firebase/database';
-import { getAuth, signInAnonymously } from 'firebase/auth';
+import { getAuth, onAuthStateChanged, signInAnonymously } from 'firebase/auth';
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -16,4 +16,30 @@ const app = initializeApp(firebaseConfig);
 export const db = getDatabase(app);
 export const auth = getAuth(app);
 
-signInAnonymously(auth).catch((err) => console.error('Auth error:', err));
+/** Resolves only after Firebase has a real authenticated user. */
+export const authReady = new Promise((resolve, reject) => {
+  let settled = false;
+  const finish = (fn, value) => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timeoutId);
+    unsubscribe();
+    fn(value);
+  };
+  const timeoutId = setTimeout(
+    () => finish(reject, new Error('Authentication timed out. Check your connection and try again.')),
+    15000,
+  );
+  const unsubscribe = onAuthStateChanged(
+    auth,
+    (user) => {
+      if (user?.uid) finish(resolve, user);
+    },
+    (error) => finish(reject, error),
+  );
+  if (!auth.currentUser) {
+    signInAnonymously(auth).catch((error) => finish(reject, error));
+  }
+});
+
+authReady.catch((error) => console.error('Firebase authentication failed:', error));

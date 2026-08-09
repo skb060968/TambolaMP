@@ -11,10 +11,8 @@
 import {
   joinRoomAsPlayer, listenRoom, setupPlayerDisconnectHandler,
   writePlayerMarks, submitClaimRequest, leaveRoom, setReady,
-  rejoinRoom, MAX_PLAYERS, firebaseRetry,
+  rejoinRoom, comparePlayerKeys, MAX_PLAYERS,
 } from './firebase-sync.js';
-import { db } from './firebase-config.js';
-import { ref, get } from 'firebase/database';
 import { deserializeTicket } from './ticket-generator.js';
 import { PATTERNS, PATTERN_LABELS } from './claim-validator.js';
 import {
@@ -59,52 +57,29 @@ function setAutoCut(v) {
 }
 
 /* ======= INITIAL SNAPSHOT LOADER ======= */
-/**
- * Load initial room snapshot when rejoining an active game.
- * This ensures disconnected players get their tickets when they reconnect,
- * even if the onTicketsChange listener doesn't fire (because tickets haven't
- * changed since they were originally assigned).
- */
-async function loadInitialGameSnapshot(roomCode) {
-  try {
-    const snap = await firebaseRetry(() => get(ref(db, `tambola-mp-rooms/${roomCode}`)));
-    if (!snap.exists()) return;
-    const data = snap.val();
-    
-    // Populate firebaseSnapshot with initial data
-    firebaseSnapshot.meta = data.meta || {};
-    firebaseSnapshot.players = data.players || {};
-    firebaseSnapshot.tickets = data.tickets || {};
-    firebaseSnapshot.game = data.game || {};
-    firebaseSnapshot.marks = data.marks || {};
-    firebaseSnapshot.claimResults = data.claimResults || {};
-    firebaseSnapshot.ready = data.ready || {};
-    
-    // Load my ticket if it exists
-    const myKey = `player_${playerIndex}`;
-    if (data.tickets && data.tickets[myKey]) {
-      myTicket = deserializeTicket(data.tickets[myKey]);
-      renderPhoneTicket();
-      renderPhonePlayerTag();
-    }
-    
-    // Load drawn numbers and marks
-    if (data.game) {
-      const drawn = data.game.drawnNumbers || [];
-      calledSet = new Set(drawn);
-      lastCalled = data.game.currentNumber;
-      renderCalledBadge();
-      renderClaimButtons();
-    }
-    
-    // Load my marks from Firebase
-    if (data.marks && data.marks[myKey]) {
-      myMarks = new Set(data.marks[myKey]);
-      renderPhoneTicket();
-    }
-  } catch (err) {
-    console.warn('loadInitialGameSnapshot failed:', err.message);
-  }
+function applyInitialGameSnapshot(data) {
+  if (!data) return;
+  firebaseSnapshot.meta = data.meta || {};
+  firebaseSnapshot.players = data.players || {};
+  firebaseSnapshot.tickets = data.tickets || {};
+  firebaseSnapshot.game = data.game || {};
+  firebaseSnapshot.marks = data.marks || {};
+  firebaseSnapshot.claimResults = data.claimResults || {};
+  firebaseSnapshot.ready = data.ready || {};
+
+  const myKey = `player_${playerIndex}`;
+  if (data.tickets?.[myKey]) myTicket = deserializeTicket(data.tickets[myKey]);
+  const drawn = Array.isArray(data.game?.drawnNumbers) ? data.game.drawnNumbers : [];
+  calledSet = new Set(drawn);
+  lastCalled = data.game?.currentNumber ?? null;
+  const ticketNumbers = new Set((myTicket || []).flat().filter((number) => number > 0));
+  myMarks = new Set((data.marks?.[myKey] || []).filter(
+    (number) => ticketNumbers.has(number) && calledSet.has(number),
+  ));
+  renderPhoneTicket();
+  renderPhonePlayerTag();
+  renderCalledBadge();
+  renderClaimButtons();
 }
 
 /* ======= ENTRY ======= */
@@ -133,13 +108,10 @@ export async function resumePhoneSession(savedRoomCode, savedPlayerIndex) {
     showScreen('home');
     return;
   }
-  setupPlayerDisconnectHandler(roomCode, playerIndex);
-  
-  // If rejoining an active game, load the initial snapshot to populate ticket and game state
-  if (result.status === 'active') {
-    await loadInitialGameSnapshot(savedRoomCode);
-  }
-  
+  setupPlayerDisconnectHandler(roomCode, playerIndex)
+    .catch((error) => console.warn(error.message));
+
+  if (result.room) applyInitialGameSnapshot(result.room);
   attachRoomListener();
   if (result.status === 'lobby') showScreen('phone-lobby');
   else if (result.status === 'active') showScreen('phone-game');
@@ -181,7 +153,8 @@ function wirePhoneJoin() {
       roomCode = code;
       playerIndex = result.playerIndex;
       saveSession();
-      setupPlayerDisconnectHandler(roomCode, playerIndex);
+      setupPlayerDisconnectHandler(roomCode, playerIndex)
+        .catch((error) => console.warn(error.message));
       attachRoomListener();
       showScreen('phone-lobby');
       renderPhoneLobby();
@@ -233,7 +206,7 @@ function attachRoomListener() {
       renderPhonePlayerTag();
       // If our slot disappeared (host kicked us / left), go home.
       const myKey = `player_${playerIndex}`;
-      if (firebaseSnapshot.meta?.status !== 'ended' && players && Object.keys(players).length > 0 && !players[myKey]) {
+      if (firebaseSnapshot.meta?.status !== 'ended' && !players[myKey]) {
         showToast('Removed from room.');
         cleanupAndGoHome();
       }
@@ -242,7 +215,13 @@ function attachRoomListener() {
       firebaseSnapshot.tickets = tickets;
       const myKey = `player_${playerIndex}`;
       if (tickets && tickets[myKey]) {
-        myTicket = deserializeTicket(tickets[myKey]);
+        try {
+          myTicket = deserializeTicket(tickets[myKey]);
+        } catch (error) {
+          console.error('Invalid ticket received:', error);
+          showToast('Ticket data is invalid. Ask the host to create a new round.');
+          return;
+        }
         renderPhoneTicket();
         renderPhonePlayerTag();
         
@@ -307,7 +286,12 @@ function attachRoomListener() {
       if (game.claims) {
         Object.keys(game.claims).forEach((p) => {
           const c = game.claims[p];
-          if (c?.won) showWinBannerOnce(p, c);
+          if (c?.won) {
+            showWinBannerOnce(p, c);
+            _claimRequestsAwaiting.forEach((pendingPattern, requestId) => {
+              if (pendingPattern === p) _claimRequestsAwaiting.delete(requestId);
+            });
+          }
         });
       }
     },
@@ -329,8 +313,11 @@ function attachRoomListener() {
       // a refresh) so we don't overwrite our struck numbers with an empty set.
       const myKey = `player_${playerIndex}`;
       const myFromFb = (marks && marks[myKey]) || null;
-      if (myFromFb && Array.isArray(myFromFb)) {
-        const remoteSet = new Set(myFromFb);
+      if (myFromFb && Array.isArray(myFromFb) && myTicket) {
+        const ticketNumbers = new Set(myTicket.flat().filter((number) => number > 0));
+        const remoteSet = new Set(myFromFb.filter(
+          (number) => ticketNumbers.has(number) && calledSet.has(number),
+        ));
         // Only hydrate if remote has more than local (avoid wiping unsaved local taps).
         if (remoteSet.size > myMarks.size) {
           myMarks = remoteSet;
@@ -381,8 +368,9 @@ function renderPhoneLobby() {
   const list = document.getElementById('phone-lobby-players');
   if (!list) return;
   const players = firebaseSnapshot.players || {};
-  // Skip ghost slots (see firebase-sync joinRoomAsPlayer for context).
-  const keys = Object.keys(players).filter((k) => players[k] && players[k].name).sort();
+  const keys = Object.keys(players)
+    .filter((key) => players[key]?.name)
+    .sort(comparePlayerKeys);
   list.innerHTML = '';
   keys.forEach((k) => {
     const p = players[k] || {};
@@ -472,7 +460,7 @@ function handleTicketTap(value, cell) {
 
 function persistMarks() {
   if (roomCode == null || playerIndex == null) return;
-  writePlayerMarks(roomCode, playerIndex, [...myMarks]).catch((err) => {
+  writePlayerMarks(roomCode, playerIndex, [...myMarks].sort((a, b) => a - b)).catch((err) => {
     console.warn('writePlayerMarks failed:', err.message);
   });
 }
@@ -532,7 +520,9 @@ function renderClaimButtons() {
     const c = claims[pattern];
     if (c?.won) {
       btn.classList.add('won');
-      btn.classList.toggle('mine-won', c.winner === playerIndex);
+      const myKey = `player_${playerIndex}`;
+      btn.classList.toggle('mine-won', c.winnerPlayerKey === myKey ||
+        (!c.winnerPlayerKey && c.winner === playerIndex));
     } else {
       btn.classList.remove('won', 'mine-won');
     }
@@ -540,8 +530,11 @@ function renderClaimButtons() {
 }
 
 async function handleClaim(pattern) {
-  if (roomCode == null || playerIndex == null) return;
-  if (!myTicket) return;
+  if (roomCode == null || playerIndex == null || !myTicket) return;
+  if ([..._claimRequestsAwaiting.values()].includes(pattern)) {
+    showToast('This claim is already being checked.');
+    return;
+  }
   try {
     const reqId = await submitClaimRequest(roomCode, playerIndex, pattern);
     _claimRequestsAwaiting.set(reqId, pattern);
@@ -630,7 +623,8 @@ function renderPhoneResults() {
     const li = document.createElement('li');
     if (c?.won) {
       const name = c.playerName || 'Player';
-      totals[c.winner] = (totals[c.winner] || 0) + prize;
+      const winnerKey = c.winnerPlayerKey || `player_${c.winner}`;
+      totals[winnerKey] = (totals[winnerKey] || 0) + prize;
       li.innerHTML = `<span class="rl-pat">${PATTERN_LABELS[p]}</span> <span class="rl-winner">🏆 ${escapeHtml(name)}</span> <span class="rl-prize">🪙 ${prize}</span>`;
     } else {
       li.innerHTML = `<span class="rl-pat">${PATTERN_LABELS[p]}</span> <span class="rl-winner muted">Unclaimed</span> <span class="rl-prize muted">🪙 ${prize}</span>`;
@@ -649,8 +643,8 @@ function renderPhoneResults() {
       heading.className = 'phone-results-summary-heading';
       heading.textContent = '🏆 Prize Summary';
       summary.appendChild(heading);
-      entries.forEach(([idx, coins]) => {
-        const p = players[`player_${idx}`] || { name: 'Player', emoji: '😀' };
+      entries.forEach(([playerKey, coins]) => {
+        const p = players[playerKey] || { name: 'Player', emoji: '😀' };
         const row = document.createElement('div');
         row.className = 'phone-results-total-row';
         row.innerHTML = `<span class="rl-emoji">${escapeHtml(p.emoji)}</span><span class="rl-name">${escapeHtml(p.name)}</span><span class="rl-total">🪙 ${coins}</span>`;
@@ -682,7 +676,7 @@ function renderPhoneReadyIndicators() {
   const players = firebaseSnapshot.players || {};
   // Use the player keys as they were at game-start order, falling back to
   // current players map if those aren't available.
-  const keys = Object.keys(players).sort();
+  const keys = Object.keys(players).sort(comparePlayerKeys);
   if (keys.length === 0) {
     container.hidden = true;
     container.innerHTML = '';

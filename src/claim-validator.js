@@ -12,6 +12,8 @@
  * round friendly and Early Five tends to dominate the early game.
  */
 
+import { validateTicket } from './ticket-generator.js';
+
 export const PATTERNS = {
   topLine: 'topLine',
   middleLine: 'middleLine',
@@ -33,7 +35,6 @@ function getRowNumbers(ticket, rowIndex) {
 }
 
 function getCornerNumbers(ticket) {
-  // First and last numbered cells of row 0 and row 2.
   const row0 = ticket[0].filter((v) => v > 0);
   const row2 = ticket[2].filter((v) => v > 0);
   return [row0[0], row0[row0.length - 1], row2[0], row2[row2.length - 1]];
@@ -43,14 +44,23 @@ function getAllNumbers(ticket) {
   return ticket.flat().filter((v) => v > 0);
 }
 
-/**
- * @param {number[][]} ticket
- * @param {Set<number>} markedNumbers   — numbers the player has marked
- * @param {Set<number>} calledNumbers   — numbers actually called by the host
- * @param {string} pattern              — one of PATTERNS
- * @returns {{ valid: boolean, reason?: string }}
- */
 export function validateClaim(ticket, markedNumbers, calledNumbers, pattern) {
+  if (!validateTicket(ticket)) return { valid: false, reason: 'Invalid ticket' };
+  if (!(markedNumbers instanceof Set) || !(calledNumbers instanceof Set)) {
+    return { valid: false, reason: 'Invalid claim data' };
+  }
+  const ticketNumbers = new Set(getAllNumbers(ticket));
+  for (const number of markedNumbers) {
+    if (!Number.isSafeInteger(number) || !ticketNumbers.has(number)) {
+      return { valid: false, reason: 'Invalid marked numbers' };
+    }
+  }
+  for (const number of calledNumbers) {
+    if (!Number.isSafeInteger(number) || number < 1 || number > 90) {
+      return { valid: false, reason: 'Invalid called numbers' };
+    }
+  }
+
   switch (pattern) {
     case PATTERNS.topLine:
       return validateLine(ticket, markedNumbers, calledNumbers, 0);
@@ -68,34 +78,28 @@ export function validateClaim(ticket, markedNumbers, calledNumbers, pattern) {
 }
 
 function validateLine(ticket, markedNumbers, calledNumbers, rowIndex) {
-  const rowNums = getRowNumbers(ticket, rowIndex);
-  const missing = rowNums.filter(
+  const missing = getRowNumbers(ticket, rowIndex).filter(
     (n) => !markedNumbers.has(n) || !calledNumbers.has(n)
   );
-  if (missing.length > 0) {
-    return { valid: false, reason: `Row ${rowIndex + 1} missing: ${missing.join(', ')}` };
-  }
-  return { valid: true };
+  return missing.length > 0
+    ? { valid: false, reason: `Row ${rowIndex + 1} missing: ${missing.join(', ')}` }
+    : { valid: true };
 }
 
 function validateCorners(ticket, markedNumbers, calledNumbers) {
-  const corners = getCornerNumbers(ticket);
-  const missing = corners.filter(
+  const missing = getCornerNumbers(ticket).filter(
     (n) => !markedNumbers.has(n) || !calledNumbers.has(n)
   );
-  if (missing.length > 0) {
-    return { valid: false, reason: `Corners missing: ${missing.join(', ')}` };
-  }
-  return { valid: true };
+  return missing.length > 0
+    ? { valid: false, reason: `Corners missing: ${missing.join(', ')}` }
+    : { valid: true };
 }
 
 function validateFullHouse(ticket, markedNumbers, calledNumbers) {
-  const allNums = getAllNumbers(ticket);
-  const markedCount = allNums.filter(
+  const markedCount = getAllNumbers(ticket).filter(
     (n) => markedNumbers.has(n) && calledNumbers.has(n)
   ).length;
-  if (markedCount < 15) {
-    return { valid: false, reason: `${markedCount}/15 marked` };
-  }
-  return { valid: true };
+  return markedCount < 15
+    ? { valid: false, reason: `${markedCount}/15 marked` }
+    : { valid: true };
 }
