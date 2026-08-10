@@ -448,7 +448,28 @@ export async function setupTvDisconnectHandler(roomCode) {
 export async function setupPlayerDisconnectHandler(roomCode, playerIndex) {
   const { code, key } = await ownedPlayer(roomCode, playerIndex);
   const connectedRef = ref(db, `${roomPath(code)}/players/${key}/connected`);
-  const registration = onDisconnect(connectedRef);
-  await registration.set(false);
-  return () => registration.cancel();
+  const connectionRef = ref(db, '.info/connected');
+  let registration = null;
+  let disposed = false;
+
+  const handleConnection = async (snapshot) => {
+    if (disposed || snapshot.val() !== true) return;
+    try {
+      registration = onDisconnect(connectedRef);
+      // Register the offline write before announcing that this player is online.
+      await registration.set(false);
+      if (!disposed) await set(connectedRef, true);
+    } catch (error) {
+      if (!disposed) console.warn('Unable to update player presence:', error.message);
+    }
+  };
+
+  onValue(connectionRef, handleConnection);
+  return async () => {
+    disposed = true;
+    off(connectionRef, 'value', handleConnection);
+    if (registration) {
+      try { await registration.cancel(); } catch (_) {}
+    }
+  };
 }

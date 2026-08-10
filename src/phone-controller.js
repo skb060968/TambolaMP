@@ -26,6 +26,8 @@ const AUTOCUT_KEY = 'tambola_mp_autocut';
 let roomCode = null;
 let playerIndex = null;
 let unsubscribe = null;
+let cleanupPresence = null;
+let presenceBindingId = 0;
 let myTicket = null;        // 3×9 array
 let myMarks = new Set();    // numbers I've marked
 let calledSet = new Set();  // numbers actually called by host
@@ -46,6 +48,34 @@ function saveSession() {
 }
 function clearSession() {
   try { localStorage.removeItem(SESSION_KEY); } catch (_) {}
+}
+
+function bindPlayerPresence() {
+  const bindingId = ++presenceBindingId;
+  const boundRoomCode = roomCode;
+  const boundPlayerIndex = playerIndex;
+  if (cleanupPresence) {
+    cleanupPresence().catch(() => {});
+    cleanupPresence = null;
+  }
+  setupPlayerDisconnectHandler(boundRoomCode, boundPlayerIndex)
+    .then((cleanup) => {
+      if (bindingId !== presenceBindingId ||
+          roomCode !== boundRoomCode || playerIndex !== boundPlayerIndex) {
+        cleanup().catch(() => {});
+        return;
+      }
+      cleanupPresence = cleanup;
+    })
+    .catch((error) => console.warn(error.message));
+}
+
+function clearPlayerPresence() {
+  presenceBindingId++;
+  if (cleanupPresence) {
+    cleanupPresence().catch(() => {});
+    cleanupPresence = null;
+  }
 }
 
 function getAutoCut() {
@@ -108,8 +138,7 @@ export async function resumePhoneSession(savedRoomCode, savedPlayerIndex) {
     showScreen('home');
     return;
   }
-  setupPlayerDisconnectHandler(roomCode, playerIndex)
-    .catch((error) => console.warn(error.message));
+  bindPlayerPresence();
 
   if (result.room) applyInitialGameSnapshot(result.room);
   attachRoomListener();
@@ -153,8 +182,7 @@ function wirePhoneJoin() {
       roomCode = code;
       playerIndex = result.playerIndex;
       saveSession();
-      setupPlayerDisconnectHandler(roomCode, playerIndex)
-        .catch((error) => console.warn(error.message));
+      bindPlayerPresence();
       attachRoomListener();
       showScreen('phone-lobby');
       renderPhoneLobby();
@@ -707,6 +735,7 @@ function renderPhoneReadyIndicators() {
 /* ======= CLEANUP ======= */
 function cleanupAndGoHome() {
   if (unsubscribe) { unsubscribe(); unsubscribe = null; }
+  clearPlayerPresence();
   clearSession();
   roomCode = null;
   playerIndex = null;
