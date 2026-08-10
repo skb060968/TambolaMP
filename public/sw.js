@@ -1,5 +1,5 @@
 /* Tambola MP — resilient, user-controlled PWA updates. */
-const CACHE_VERSION = 'v33';
+const CACHE_VERSION = 'v34';
 const CACHE_NAME = `tambola-mp-${CACHE_VERSION}`;
 const STATIC_ASSETS = [
   '/', '/index.html', '/manifest.json',
