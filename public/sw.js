@@ -1,5 +1,5 @@
 /* Tambola MP — resilient, user-controlled PWA updates. */
-const CACHE_VERSION = 'v35';
+const CACHE_VERSION = 'v36';
 const CACHE_NAME = `tambola-mp-${CACHE_VERSION}`;
 const STATIC_ASSETS = [
   '/', '/index.html', '/manifest.json',
@@ -72,6 +72,7 @@ async function cacheFirst(request) {
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
   if (event.request.method !== 'GET' || url.origin !== self.location.origin) return;
+  if (url.pathname.startsWith('/api/')) return;
   if (event.request.headers.has('range')) return;
 
   const networkFirstRequest = event.request.mode === 'navigate' ||

@@ -19,11 +19,14 @@ import {
   initAudio, playSound, speakNumber, isMuted, toggleMute,
 } from './sound-manager.js';
 import { showScreen, showToast } from './platform-ui.js';
+import { authReady } from './firebase-config.js';
+import { mountVoiceChat } from './voice-chat-widget.js';
 
 const SESSION_KEY = 'tambola_mp_session';
 const AUTOCUT_KEY = 'tambola_mp_autocut';
 
 let roomCode = null;
+let voiceWidget = null;
 let playerIndex = null;
 let unsubscribe = null;
 let cleanupPresence = null;
@@ -447,6 +450,19 @@ function wirePhoneGame() {
   document.querySelectorAll('.claim-btn').forEach((btn) => {
     btn.addEventListener('click', () => handleClaim(btn.dataset.pattern));
   });
+
+  // Optional voice chat (players only; host uses the TV screen).
+  if (!voiceWidget) {
+    voiceWidget = mountVoiceChat({
+      mount: '#voice-widget',
+      game: 'tambola',
+      getRoomCode: () => roomCode,
+      getIdentity: () => (playerIndex != null ? `player_${playerIndex}` : null),
+      getDisplayName: () => (firebaseSnapshot.players || {})[`player_${playerIndex}`]?.name || 'Player',
+      getIdToken: async () => (await authReady).getIdToken(),
+      notify: (message) => showToast(message),
+    });
+  }
 }
 
 function renderPhoneTicket() {
@@ -734,6 +750,7 @@ function renderPhoneReadyIndicators() {
 
 /* ======= CLEANUP ======= */
 function cleanupAndGoHome() {
+  if (voiceWidget) { try { voiceWidget.stop(); } catch (_) {} }
   if (unsubscribe) { unsubscribe(); unsubscribe = null; }
   clearPlayerPresence();
   clearSession();
