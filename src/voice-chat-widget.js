@@ -10,7 +10,7 @@
  *   1. Place an empty container in the game screen, e.g. <div id="voice-widget"></div>
  *   2. mountVoiceChat({
  *        mount: '#voice-widget',
- *        game: 'roulette',               // per-game id (namespaces the LiveKit room)
+ *        game: 'tambola',                // per-game id (namespaces the LiveKit room)
  *        getRoomCode: () => roomCode,     // current 4-letter code
  *        getIdentity: () => `player_${playerIndex}`,
  *        getDisplayName: () => playerName,
