@@ -60,6 +60,12 @@ let _drawPending = false;
 let _processedRequests = new Set();
 let _resultsShown = false;
 
+/* Lobby presence: a dropped player lingers briefly with the OFFLINE treatment,
+   then is pruned from the TV list. The counter and Start count only connected. */
+const LOBBY_PRUNE_DELAY_MS = 2500;
+let lobbyDisconnectedSince = {};
+let lobbyPruneTimer = null;
+
 /* ======= SESSION ======= */
 function saveSession() {
   if (roomCode) {
@@ -234,13 +240,53 @@ function setupLobbyUi() {
   renderLobbyUi();
 }
 
+/** All named players, in slot order. */
+function lobbyPlayerKeys() {
+  const players = firebaseSnapshot.players || {};
+  return Object.keys(players).filter((key) => players[key]?.name).sort(comparePlayerKeys);
+}
+
+/** Named players still connected — the roster the counter and Start button use. */
+function connectedLobbyKeys() {
+  const players = firebaseSnapshot.players || {};
+  return lobbyPlayerKeys().filter((key) => players[key]?.connected !== false);
+}
+
+/** Track when each player first went offline so a dropped row can linger with
+    the OFFLINE treatment and then be pruned. */
+function trackLobbyDisconnections() {
+  const players = firebaseSnapshot.players || {};
+  const stamp = Date.now();
+  const next = {};
+  let pruneNeeded = false;
+  lobbyPlayerKeys().forEach((key) => {
+    if (players[key]?.connected === false) {
+      next[key] = lobbyDisconnectedSince[key] || stamp;
+      if (stamp - next[key] < LOBBY_PRUNE_DELAY_MS) pruneNeeded = true;
+    }
+  });
+  lobbyDisconnectedSince = next;
+  if (!pruneNeeded || lobbyPruneTimer !== null) return;
+  lobbyPruneTimer = setTimeout(() => {
+    lobbyPruneTimer = null;
+    renderLobbyUi();
+  }, LOBBY_PRUNE_DELAY_MS);
+}
+
+/** Whether a player row still belongs in the lobby list. */
+function isLobbyKeyVisible(key) {
+  const players = firebaseSnapshot.players || {};
+  if (players[key]?.connected !== false) return true;
+  const since = lobbyDisconnectedSince[key];
+  return typeof since === 'number' && Date.now() - since < LOBBY_PRUNE_DELAY_MS;
+}
+
 function renderLobbyUi() {
   const list = document.getElementById('tv-lobby-players');
   if (!list) return;
   const players = firebaseSnapshot.players || {};
-  const keys = Object.keys(players)
-    .filter((key) => players[key]?.name)
-    .sort(comparePlayerKeys);
+  trackLobbyDisconnections();
+  const keys = lobbyPlayerKeys().filter(isLobbyKeyVisible);
   list.innerHTML = '';
   if (keys.length === 0) {
     const empty = document.createElement('li');
@@ -290,10 +336,11 @@ function renderLobbyUi() {
       list.appendChild(li);
     });
   }
+  const connectedCount = connectedLobbyKeys().length;
   const startBtn = document.getElementById('btn-tv-start-round');
-  if (startBtn) startBtn.disabled = keys.length === 0;
+  if (startBtn) startBtn.disabled = connectedCount === 0;
   const countEl = document.getElementById('tv-lobby-count');
-  if (countEl) countEl.textContent = `${keys.length} / ${MAX_PLAYERS}`;
+  if (countEl) countEl.textContent = `${connectedCount} / ${MAX_PLAYERS}`;
 }
 
 function wireTvLobby() {
@@ -340,11 +387,9 @@ function syncMuteUi() {
 
 /* ======= START ROUND ======= */
 async function startRound() {
-  const playerKeys = Object.keys(firebaseSnapshot.players || {})
-    .filter((key) => firebaseSnapshot.players[key]?.name)
-    .sort(comparePlayerKeys);
+  const playerKeys = connectedLobbyKeys();
   if (playerKeys.length === 0) {
-    showToast('Need at least one player to start.');
+    showToast('Need at least one connected player to start.');
     return;
   }
 
