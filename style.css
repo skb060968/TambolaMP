@@ -1061,3 +1061,20 @@ body[data-mode="phone"] .screen { max-width: 480px; margin: 0 auto; }
     font-size: clamp(0.45rem, 1.5vw, 0.7rem);
   }
 }
+
+/* ==========================================================================
+   Update toast slide-in
+   Moved out of an inline <style> block in index.html: Vite 7's
+   html-inline-proxy plugin fails to resolve inline CSS during `vite build`
+   ("No matching HTML proxy module found"), which broke the production build.
+   ========================================================================== */
+@keyframes slideUp {
+  from {
+    transform: translateX(-50%) translateY(100px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(-50%) translateY(0);
+    opacity: 1;
+  }
+}
