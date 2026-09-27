@@ -28,8 +28,10 @@ const T_CHURN = 0.9, T_DROP = 0.75, T_SETTLE = 0.5;
 export const DRAW_MS = Math.round((T_CHURN + T_DROP + T_SETTLE) * 1000);
 
 /* ---- layout (world units) ---- */
-const CYL_R = 0.55, CYL_LEN = 3.6, CYL_Y = 1.45;           // glass cylinder, axis along x
+// Compact: 90 balls fill about 60 % of the glass at the start, so it never looks empty early on.
+const CYL_R = 0.42, CYL_LEN = 2.9, CYL_Y = 1.3;            // glass cylinder, axis along x
 const BALL_R = 0.105;                                       // pool balls
+const HATCH_R = BALL_R * 1.45;                              // the round exit hatch on the cylinder's front face
 const SHOW = new THREE.Vector3(0, -0.05, 0.35);             // where the drawn ball hangs
 const SHOW_R = 0.52;                                        // drawn ball radius (true sphere, big)
 const TRAY_Y = -1.15, TRAY_Z = 0.3, TRAY_R = 0.26, TRAY_GAP = 0.78;
@@ -49,27 +51,31 @@ let rafId = 0, last = 0;
 let churn = 0;                                // 0 = idle drift, 1 = full blast
 let drawAnim = null;
 let lowEnd = false;
+let hatch = null, hatchOpen = 0;              // lid group; 0 closed … 1 open
+const HATCH_POS = new THREE.Vector3(), HATCH_OUT = new THREE.Vector3();
 const tmpV = new THREE.Vector3();
 const INNER = CYL_R - BALL_R * 1.15;          // radius the pool balls' centres may reach
 const HALF_X = CYL_LEN / 2 - BALL_R * 1.3;
 
 /* =================== textures =================== */
-/** White ball, coloured caps, the number printed twice (front and back). */
+/** Solid decade-coloured ball with a white patch carrying the number in black, front and back. */
 function ballTexture(n) {
   if (textures.has(n)) return textures.get(n);
   const W = lowEnd ? 256 : 512, H = W / 2;
   const c = document.createElement('canvas'); c.width = W; c.height = H;
   const ctx = c.getContext('2d');
-  ctx.fillStyle = '#f7f5f0'; ctx.fillRect(0, 0, W, H);
-  ctx.fillStyle = decadeColour(n);
-  ctx.fillRect(0, 0, W, H * 0.16); ctx.fillRect(0, H * 0.84, W, H * 0.16);
-  ctx.font = `900 ${Math.round(H * 0.6)}px "Arial Black", Arial, sans-serif`;
+  ctx.fillStyle = decadeColour(n); ctx.fillRect(0, 0, W, H);
+  // a soft darker band toward the poles so the sphere reads as solid, not flat
+  const g = ctx.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, 'rgba(0,0,0,0.28)'); g.addColorStop(0.35, 'rgba(0,0,0,0)'); g.addColorStop(0.65, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(0,0,0,0.28)');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  ctx.font = `800 ${Math.round(H * 0.27)}px Arial, Helvetica, sans-serif`;
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   [0.25, 0.75].forEach((u) => {
-    ctx.beginPath(); ctx.arc(W * u, H / 2, H * 0.36, 0, Math.PI * 2);
-    ctx.fillStyle = '#fff'; ctx.fill();
-    ctx.lineWidth = H * 0.025; ctx.strokeStyle = decadeColour(n); ctx.stroke();
-    ctx.fillStyle = '#111'; ctx.fillText(String(n), W * u, H * 0.53);
+    ctx.beginPath(); ctx.arc(W * u, H / 2, H * 0.205, 0, Math.PI * 2);
+    ctx.fillStyle = '#fbfaf7'; ctx.fill();
+    ctx.lineWidth = H * 0.015; ctx.strokeStyle = 'rgba(0,0,0,0.25)'; ctx.stroke();
+    ctx.fillStyle = '#111'; ctx.fillText(String(n), W * u, H * 0.515);
   });
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
@@ -88,6 +94,7 @@ function ballMaterial(n) {
 function makePoolBall(n) {
   const m = new THREE.Mesh(ballGeo, ballMaterial(n));
   m.castShadow = false;                        // 90 small casters bought nothing but noise
+  m.renderOrder = 0;                           // before the glass and the hatch (see buildScene)
   m.userData.number = n;
   // swarm parameters: a home spot on the floor of the cylinder and a personal rhythm
   m.userData.home = new THREE.Vector3(0, -INNER, 0);
@@ -127,6 +134,9 @@ function buildScene() {
   const tube = new THREE.Mesh(new THREE.CylinderGeometry(CYL_R, CYL_R, CYL_LEN, 48, 1, true), glass);
   tube.rotation.z = Math.PI / 2; tube.position.y = CYL_Y; tube.renderOrder = 10;
   scene.add(tube);
+  // Pool balls render BEFORE the glass (lower renderOrder) and the hatch AFTER it, so the
+  // lid always reads as sitting in the wall in front of the balls, not floating over them.
+  const POOL_ORDER = 0, HATCH_ORDER = 20;
   const chrome = new THREE.MeshStandardMaterial({ color: 0xd9dde3, metalness: 0.85, roughness: 0.25 });
   const capGeo = new THREE.CylinderGeometry(CYL_R * 1.04, CYL_R * 1.04, 0.1, 48);
   [-1, 1].forEach((s) => {
@@ -136,10 +146,30 @@ function buildScene() {
     const band = new THREE.Mesh(new THREE.TorusGeometry(CYL_R * 1.01, 0.02, 8, 48), chrome);
     band.rotation.y = Math.PI / 2; band.position.set(s * CYL_LEN * 0.3, CYL_Y, 0); scene.add(band);
   });
-  // exit hole in the floor of the cylinder: a short chrome collar the ball drops through
-  const collar = new THREE.Mesh(new THREE.CylinderGeometry(BALL_R * 1.6, BALL_R * 1.5, 0.12, 24, 1, true), chrome);
-  collar.material = chrome.clone(); collar.material.side = THREE.DoubleSide;
-  collar.position.set(0, CYL_Y - CYL_R - 0.02, 0); scene.add(collar);
+  // Exit hatch on the FRONT face, low, centred: a chrome rim ring set into the glass and a
+  // round lid hinged at its top edge. Normally closed; it swings up/out to let the ball roll
+  // out, then closes. The lid pivots about a group placed at the hinge.
+  const hatchAng = -0.62;                                   // where on the section (radians from +z toward −y)
+  const hatchPos = new THREE.Vector3(0, CYL_Y + Math.sin(hatchAng) * CYL_R, Math.cos(hatchAng) * CYL_R);
+  const hatchNormal = new THREE.Vector3(0, Math.sin(hatchAng), Math.cos(hatchAng));
+  const rim = new THREE.Mesh(new THREE.TorusGeometry(HATCH_R, 0.018, 8, 40), chrome);
+  rim.position.copy(hatchPos); rim.lookAt(hatchPos.clone().add(hatchNormal)); rim.renderOrder = HATCH_ORDER; scene.add(rim);
+  // Pivot group at the top edge of the opening. Everything lies in the yz plane (the hatch
+  // is on the x=0 meridian), so its orientation is a single tilt about x: the lid disc,
+  // built facing +z and hanging below the hinge, is tilted so it sits flush in the glass.
+  hatch = new THREE.Group();
+  const hingeUp = new THREE.Vector3(0, Math.cos(hatchAng), -Math.sin(hatchAng));   // tangent "up" at the hatch
+  hatch.position.copy(hatchPos).addScaledVector(hingeUp, HATCH_R);
+  hatch.userData.rest = -hatchAng;                          // rotation.x that makes the lid's normal = hatchNormal
+  hatch.rotation.x = hatch.userData.rest;
+  const lid = new THREE.Mesh(new THREE.CircleGeometry(HATCH_R * 0.97, 32), new THREE.MeshStandardMaterial({ color: 0xb8bec8, metalness: 0.7, roughness: 0.3, side: THREE.DoubleSide }));
+  lid.position.y = -HATCH_R;                                // hang the disc below the hinge
+  lid.renderOrder = HATCH_ORDER;
+  hatch.add(lid);
+  const hinge = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, HATCH_R * 1.4, 10), chrome);
+  hinge.rotation.z = Math.PI / 2; hinge.renderOrder = HATCH_ORDER; hatch.add(hinge);
+  scene.add(hatch);
+  HATCH_POS.copy(hatchPos); HATCH_OUT.copy(hatchNormal);
   // No backdrop: the scene floats over the page. (A shadow plane behind the cylinder threw a
   // wall of ball shadows onto the TV background.) The drawn ball and tray still shadow each other.
 
@@ -283,7 +313,7 @@ function finishDraw() {
   });
   trayBalls = tray.slice(0, 3);
   assignHomes();
-  churn = 0;
+  churn = 0; hatchOpen = 0;
   a.resolve();
 }
 
@@ -295,6 +325,9 @@ function frame(now) {
   rafId = requestAnimationFrame(frame);
   const dt = Math.min(0.05, (now - last) / 1000); last = now;
   if (drawAnim) tickDraw(now, dt);
+  else hatchOpen = Math.max(0, hatchOpen - dt * 3);
+  // lid: hinged at its top edge, swings outward and up by ~100° (negative x = bottom edge comes toward +z)
+  if (hatch) hatch.rotation.x = hatch.userData.rest - easeInOut(hatchOpen) * 1.75;
   swarm(now / 1000, dt);
   if (document.hidden || !canvas || canvas.clientWidth === 0) return;
   renderer.render(scene, camera);
@@ -335,37 +368,44 @@ function tickDraw(now, dt) {
     /* ---- air on: everything churns; the chosen ball is steered to the floor hole ---- */
     churn = Math.min(1, churn + dt * 3);
     const k = tSec / T_CHURN;
-    if (k > 0.55) {
+    if (k > 0.5) {
       if (a.phase < 1) { a.phase = 1; a.from = b.position.clone(); }
-      const s = easeInOut((k - 0.55) / 0.45);
-      tmpV.set(0, CYL_Y - INNER, 0);           // sitting over the hole
+      const s = easeInOut((k - 0.5) / 0.5);
+      // to just inside the hatch, while the lid swings open ahead of it
+      tmpV.copy(HATCH_POS).addScaledVector(HATCH_OUT, -BALL_R * 1.1);
       b.position.lerpVectors(a.from, tmpV, s);
       b.rotateOnAxis(a.spinAxis, dt * 10);
+      hatchOpen = Math.min(1, hatchOpen + dt * 4);
     }
   } else if (tSec < T_CHURN + T_DROP) {
-    /* ---- drop: through the collar, free fall, one bounce on the pedestal, growing to size ---- */
+    /* ---- out: through the open hatch, a short arc forward, then free fall onto the pedestal ---- */
     if (a.phase < 2) {
       a.phase = 2; churn = 0.35;                // air off; the rest settle
       poolBalls.delete(a.number);               // no longer part of the swarm
       b.geometry = bigGeo; b.scale.setScalar(BALL_R);
+      a.exit = HATCH_POS.clone().addScaledVector(HATCH_OUT, BALL_R * 1.2);   // just outside the lid
     }
     const u = tSec - T_CHURN, k = u / T_DROP;
-    const y0 = CYL_Y - INNER, y1 = SHOW.y;
-    // fall under gravity chosen so the first bounce lands exactly at T_DROP*0.7, then a small hop
+    // horizontal: from the hatch to the display spot, easing; vertical: ballistic from the exit
+    // height with a forward "kick" so it clears the glass, landing at 70 % then a small hop
     const tLand = T_DROP * 0.7;
-    const g = 2 * (y0 - y1) / (tLand * tLand);
+    const y0 = a.exit.y, y1 = SHOW.y, vy0 = 0.9;                       // small upward kick out of the hatch
+    const g = 2 * (vy0 * tLand + (y0 - y1)) / (tLand * tLand);
     let y;
-    if (u < tLand) y = y0 - 0.5 * g * u * u;
-    else { const v = (u - tLand) / (T_DROP - tLand); y = y1 + Math.sin(v * Math.PI) * 0.16 * (1 - v * 0.5); }
-    b.position.set(SHOW.x * k, y, SHOW.z * k);
+    if (u < tLand) y = y0 + vy0 * u - 0.5 * g * u * u;
+    else { const v = (u - tLand) / (T_DROP - tLand); y = y1 + Math.sin(v * Math.PI) * 0.14 * (1 - v * 0.5); }
+    const e = easeInOut(Math.min(1, k * 1.15));
+    b.position.set(a.exit.x + (SHOW.x - a.exit.x) * e, y, a.exit.z + (SHOW.z - a.exit.z) * e);
     b.scale.setScalar(BALL_R + (SHOW_R - BALL_R) * easeInOut(Math.min(1, k * 1.3)));
     b.rotateOnAxis(a.spinAxis, dt * a.spinRate);
+    if (k > 0.3) hatchOpen = Math.max(0, hatchOpen - dt * 3);          // lid swings shut behind it
     // tray shifts while the ball falls
     shiftTray(easeInOut(k));
   } else {
     /* ---- settle: spin dies, the number turns to face the room ---- */
     if (a.phase < 3) { a.phase = 3; a.qFrom = b.quaternion.clone(); a.qTo = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -0.08); }
     churn = Math.max(0, churn - dt * 1.2);
+    hatchOpen = Math.max(0, hatchOpen - dt * 3);
     const k = clamp01((tSec - T_CHURN - T_DROP) / T_SETTLE);
     b.position.copy(SHOW);
     b.scale.setScalar(SHOW_R);
