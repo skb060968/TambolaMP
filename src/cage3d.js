@@ -1,37 +1,40 @@
 /**
- * Tambola MP — the caller's cage (three.js)
+ * Tambola MP — the caller's blower (three.js)
  *
- * Replaces the CSS "vibrating ball" on the TV screen with a hand-cranked spherical
- * wire cage holding every ball still in the pool. On a draw the cage spins up, the
- * balls tumble, one drops through the chute into the cradle at the front with its
- * number facing the room, and the previous ball moves along a three-slot tray of
- * recent numbers (the oldest rolling off). The cage therefore empties visibly as the
- * round goes on: the pile of balls inside IS the remaining pool.
+ * A stationary horizontal glass cylinder holds every ball still in the pool. Idle, the
+ * balls drift slowly; before a draw the "air" comes on and they churn hard, then one
+ * ball drops out through the hole in the bottom, falls and settles as the DRAWN ball —
+ * shown large, a true glossy sphere, number facing the room. Below it a row of the last
+ * three numbers; when the next ball is drawn the current one drops into that row, the
+ * row shifts, and the oldest rolls off. The cylinder therefore empties visibly as the
+ * round goes on: the balls inside ARE the remaining pool.
  *
- * Purely visual: the number comes from the engine; the tumble is a cheap scripted
- * motion (no physics solver), and the chute ball is simply the one it is told to be.
+ * Column layout (world y, the cylinder axis is x):  cylinder → drawn ball → tray.
  *
- *   mount(hostEl)                     → boolean (false if WebGL failed; keep the CSS ball)
- *   setPool(remaining, drawn)         rebuild instantly: balls in cage, cradle, tray (restore)
- *   draw(number)                      → Promise<void>, resolves when the ball is in the cradle
+ * Only the falling ball gets physics-like motion (ballistic drop, bounce, spin decay).
+ * The churn is a scripted swarm (no solver). The drawn number comes from the engine.
+ *
+ *   mount(hostEl)                → boolean (false if WebGL failed; keep the CSS ball)
+ *   setPool(remaining, drawn)    rebuild instantly to match game state (restore / sync)
+ *   draw(number)                 → Promise<void>, resolves when the ball has settled
  *   dispose()
  *   DRAW_MS
  */
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
-export const DRAW_MS = 1700;
+/* ---- timing (seconds) ---- */
+const T_CHURN = 0.9, T_DROP = 0.75, T_SETTLE = 0.5;
+export const DRAW_MS = Math.round((T_CHURN + T_DROP + T_SETTLE) * 1000);
 
-/* ---- layout (world units; the cage radius is 1) ---- */
-const CAGE_R = 1;
-const BALL_R = 0.135;                         // 90 balls fill roughly the bottom 40 % of the cage
-const CAGE_Y = 0.55;                          // cage centre height above the "table"
-const CRADLE = new THREE.Vector3(1.22, -0.66, 1.08);   // front-right: the chute is seen in profile on its way here
-const CRADLE_SCALE = 1.7;                     // the called ball is shown big enough to read across a room
-const TRAY = [new THREE.Vector3(-0.55, -0.76, 1.2), new THREE.Vector3(-0.98, -0.78, 1.18), new THREE.Vector3(-1.36, -0.8, 1.14)];
-const TRAY_SCALE = [1.15, 0.95, 0.8];
-const TRAY_EXIT = new THREE.Vector3(-1.9, -0.82, 1.08);
-const MERIDIANS = 14, RINGS = 3;
+/* ---- layout (world units) ---- */
+const CYL_R = 0.55, CYL_LEN = 3.6, CYL_Y = 1.45;           // glass cylinder, axis along x
+const BALL_R = 0.105;                                       // pool balls
+const SHOW = new THREE.Vector3(0, -0.05, 0.35);             // where the drawn ball hangs
+const SHOW_R = 0.52;                                        // drawn ball radius (true sphere, big)
+const TRAY_Y = -1.15, TRAY_Z = 0.3, TRAY_R = 0.26, TRAY_GAP = 0.78;
+const TRAY = [-TRAY_GAP, 0, TRAY_GAP].map((x) => new THREE.Vector3(x, TRAY_Y, TRAY_Z));   // newest left
+const TRAY_EXIT = new THREE.Vector3(TRAY_GAP * 2.1, TRAY_Y - 0.4, TRAY_Z);
 
 /* ---- colour by decade, like a real set ---- */
 const DECADE_COLOURS = ['#e63946', '#f4a261', '#e9c46a', '#2a9d8f', '#457b9d', '#8e44ad', '#ff7f50', '#06d6a0', '#118ab2'];
@@ -39,19 +42,19 @@ const decadeColour = (n) => DECADE_COLOURS[Math.min(8, Math.floor((n - 1) / 10))
 
 /* =================== module state =================== */
 let host = null, canvas = null, renderer = null, scene = null, camera = null;
-let cage = null, cageBalls = new Map();       // number -> mesh (inside the cage)
-let cradleBall = null, trayBalls = [];        // meshes outside the cage
-let ballGeo = null, textures = new Map();
+let poolBalls = new Map();                    // number -> mesh, inside the cylinder
+let shownBall = null, trayBalls = [];
+let ballGeo = null, bigGeo = null, textures = new Map();
 let rafId = 0, last = 0;
-let spin = 0.15, spinTarget = 0.15;           // cage angular speed (rad/s)
-let tumble = 0;                               // 0 = balls resting, 1 = full tumble
+let churn = 0;                                // 0 = idle drift, 1 = full blast
 let drawAnim = null;
 let lowEnd = false;
-let chuteCurve = null;                        // the ball rides this from the cage to the cradle
 const tmpV = new THREE.Vector3();
+const INNER = CYL_R - BALL_R * 1.15;          // radius the pool balls' centres may reach
+const HALF_X = CYL_LEN / 2 - BALL_R * 1.3;
 
 /* =================== textures =================== */
-/** White ball, coloured band, big black number twice (front and back) so one always faces out. */
+/** White ball, coloured caps, the number printed twice (front and back). */
 function ballTexture(n) {
   if (textures.has(n)) return textures.get(n);
   const W = lowEnd ? 256 : 512, H = W / 2;
@@ -59,11 +62,10 @@ function ballTexture(n) {
   const ctx = c.getContext('2d');
   ctx.fillStyle = '#f7f5f0'; ctx.fillRect(0, 0, W, H);
   ctx.fillStyle = decadeColour(n);
-  ctx.fillRect(0, 0, W, H * 0.16); ctx.fillRect(0, H * 0.84, W, H * 0.16);   // polar caps
+  ctx.fillRect(0, 0, W, H * 0.16); ctx.fillRect(0, H * 0.84, W, H * 0.16);
   ctx.font = `900 ${Math.round(H * 0.6)}px "Arial Black", Arial, sans-serif`;
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.fillStyle = '#111';
-  [0.25, 0.75].forEach((u) => {                // two numbers, 180° apart
+  [0.25, 0.75].forEach((u) => {
     ctx.beginPath(); ctx.arc(W * u, H / 2, H * 0.36, 0, Math.PI * 2);
     ctx.fillStyle = '#fff'; ctx.fill();
     ctx.lineWidth = H * 0.025; ctx.strokeStyle = decadeColour(n); ctx.stroke();
@@ -75,16 +77,24 @@ function ballTexture(n) {
   return t;
 }
 
-function makeBall(n) {
-  const m = new THREE.Mesh(ballGeo, new THREE.MeshPhysicalMaterial({
-    map: ballTexture(n), roughness: 0.3, clearcoat: 0.7, clearcoatRoughness: 0.15,
-  }));
-  m.castShadow = true;
+/** Glossy resin, like the house balls on the bowling lane. */
+function ballMaterial(n) {
+  return new THREE.MeshPhysicalMaterial({
+    map: ballTexture(n), roughness: 0.22, metalness: 0,
+    clearcoat: 1, clearcoatRoughness: 0.08, specularIntensity: 1,
+  });
+}
+
+function makePoolBall(n) {
+  const m = new THREE.Mesh(ballGeo, ballMaterial(n));
+  m.castShadow = false;                        // 90 small casters bought nothing but noise
   m.userData.number = n;
-  m.userData.seat = new THREE.Vector3();       // resting spot in the pile
+  // swarm parameters: a home spot on the floor of the cylinder and a personal rhythm
+  m.userData.home = new THREE.Vector3(0, -INNER, 0);
   m.userData.phase = Math.random() * Math.PI * 2;
-  m.userData.rate = 0.8 + Math.random() * 0.6;
-  m.quaternion.random();                       // balls in the pile lie every which way
+  m.userData.rate = 0.7 + Math.random() * 0.8;
+  m.userData.spin = new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).normalize();
+  m.quaternion.random();
   return m;
 }
 
@@ -93,154 +103,73 @@ function buildScene() {
   scene = new THREE.Scene();
   const pmrem = new THREE.PMREMGenerator(renderer);
   scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-  scene.environmentIntensity = 0.5;
+  scene.environmentIntensity = 0.6;
   pmrem.dispose();
 
-  camera = new THREE.PerspectiveCamera(34, 1, 0.1, 50);
-  camera.position.set(-0.35, 1.25, 4.7);       // a touch to the left and above so the chute shows in profile
-  camera.lookAt(0.05, -0.05, 0.5);
+  camera = new THREE.PerspectiveCamera(30, 1, 0.1, 50);
+  camera.position.set(0, 0.35, 6.4);
+  camera.lookAt(0, 0.15, 0);
 
-  scene.add(new THREE.HemisphereLight(0xffffff, 0x554433, 0.55));
-  const key = new THREE.DirectionalLight(0xfff2e0, 2.2);
-  key.position.set(-3, 5, 4); key.castShadow = true;
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x445566, 0.5));
+  const key = new THREE.DirectionalLight(0xfff2e0, 2.0);
+  key.position.set(-2.5, 4, 4); key.castShadow = true;
   key.shadow.mapSize.set(lowEnd ? 1024 : 2048, lowEnd ? 1024 : 2048);
   key.shadow.camera.left = -3; key.shadow.camera.right = 3; key.shadow.camera.top = 3; key.shadow.camera.bottom = -3;
-  key.shadow.camera.near = 1; key.shadow.camera.far = 14; key.shadow.bias = -0.0006; key.shadow.normalBias = 0.02;
+  key.shadow.camera.near = 1; key.shadow.camera.far = 14; key.shadow.bias = -0.0005; key.shadow.normalBias = 0.02;
   scene.add(key, key.target);
-  const fill = new THREE.DirectionalLight(0xbfd0ff, 0.5); fill.position.set(3, 2, -2); scene.add(fill);
+  const fill = new THREE.DirectionalLight(0xbfd0ff, 0.45); fill.position.set(3, 1, -2); scene.add(fill);
 
-  // table: catches shadows only (page background shows through the transparent canvas)
-  const table = new THREE.Mesh(new THREE.PlaneGeometry(12, 12), new THREE.ShadowMaterial({ opacity: 0.4 }));
-  table.rotation.x = -Math.PI / 2; table.position.y = -0.9; table.receiveShadow = true;
-  scene.add(table);
-
+  // ---- the glass cylinder: an open tube plus two end caps, drawn back faces first ----
+  const glass = new THREE.MeshPhysicalMaterial({
+    color: 0xdfeeff, transmission: 0.92, roughness: 0.06, thickness: 0.15, ior: 1.45,
+    transparent: true, opacity: 1, clearcoat: 1, clearcoatRoughness: 0.05, side: THREE.DoubleSide, depthWrite: false,
+  });
+  const tube = new THREE.Mesh(new THREE.CylinderGeometry(CYL_R, CYL_R, CYL_LEN, 48, 1, true), glass);
+  tube.rotation.z = Math.PI / 2; tube.position.y = CYL_Y; tube.renderOrder = 10;
+  scene.add(tube);
   const chrome = new THREE.MeshStandardMaterial({ color: 0xd9dde3, metalness: 0.85, roughness: 0.25 });
-  const dark = new THREE.MeshStandardMaterial({ color: 0x2a2320, metalness: 0.3, roughness: 0.6 });
+  const capGeo = new THREE.CylinderGeometry(CYL_R * 1.04, CYL_R * 1.04, 0.1, 48);
+  [-1, 1].forEach((s) => {
+    const cap = new THREE.Mesh(capGeo, chrome);
+    cap.rotation.z = Math.PI / 2; cap.position.set(s * (CYL_LEN / 2 + 0.05), CYL_Y, 0);
+    cap.castShadow = true; scene.add(cap);
+    const band = new THREE.Mesh(new THREE.TorusGeometry(CYL_R * 1.01, 0.02, 8, 48), chrome);
+    band.rotation.y = Math.PI / 2; band.position.set(s * CYL_LEN * 0.3, CYL_Y, 0); scene.add(band);
+  });
+  // exit hole in the floor of the cylinder: a short chrome collar the ball drops through
+  const collar = new THREE.Mesh(new THREE.CylinderGeometry(BALL_R * 1.6, BALL_R * 1.5, 0.12, 24, 1, true), chrome);
+  collar.material = chrome.clone(); collar.material.side = THREE.DoubleSide;
+  collar.position.set(0, CYL_Y - CYL_R - 0.02, 0); scene.add(collar);
+  // No backdrop: the scene floats over the page. (A shadow plane behind the cylinder threw a
+  // wall of ball shadows onto the TV background.) The drawn ball and tray still shadow each other.
+
+  // ---- display pedestal for the drawn ball, and the tray ----
   const brass = new THREE.MeshStandardMaterial({ color: 0xc9a24a, metalness: 0.8, roughness: 0.3 });
-
-  // ---- the cage: a group that spins about the x axis ----
-  cage = new THREE.Group();
-  cage.position.y = CAGE_Y;
-  const barR = 0.016;
-  for (let i = 0; i < MERIDIANS; i += 1) {
-    const ring = new THREE.Mesh(new THREE.TorusGeometry(CAGE_R, barR, 8, 64), chrome);
-    ring.rotation.x = (i / MERIDIANS) * Math.PI;   // meridians about the spin axis (x)
-    ring.castShadow = true;
-    cage.add(ring);
-  }
-  for (let j = 1; j <= RINGS; j += 1) {
-    const lat = (j / (RINGS + 1) - 0.5) * Math.PI;   // latitude rings perpendicular to x
-    const r = Math.cos(lat) * CAGE_R;
-    const ring = new THREE.Mesh(new THREE.TorusGeometry(r, barR * 0.9, 8, 64), chrome);
-    ring.rotation.y = Math.PI / 2; ring.position.x = Math.sin(lat) * CAGE_R;
-    cage.add(ring);
-  }
-  // hubs + axle through x
-  const hubGeo = new THREE.CylinderGeometry(0.09, 0.09, 0.08, 20);
-  [-1, 1].forEach((s) => {
-    const hub = new THREE.Mesh(hubGeo, brass); hub.rotation.z = Math.PI / 2; hub.position.x = s * (CAGE_R + 0.02); cage.add(hub);
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(SHOW_R * 0.75, 0.03, 10, 56), brass);
+  ring.rotation.x = Math.PI / 2; ring.position.set(SHOW.x, SHOW.y - SHOW_R * 0.72, SHOW.z); scene.add(ring);
+  const trayGeo = new THREE.TorusGeometry(TRAY_R * 0.8, 0.02, 8, 40);
+  TRAY.forEach((p) => {
+    const r = new THREE.Mesh(trayGeo, brass);
+    r.rotation.x = Math.PI / 2; r.position.set(p.x, p.y - TRAY_R * 0.75, p.z); scene.add(r);
   });
-  scene.add(cage);
 
-  // static: axle, stand, crank, chute, cradle, tray
-  const axle = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, CAGE_R * 2 + 0.7, 12), chrome);
-  axle.rotation.z = Math.PI / 2; axle.position.y = CAGE_Y; scene.add(axle);
-  [-1, 1].forEach((s) => {
-    const post = new THREE.Mesh(new THREE.BoxGeometry(0.08, CAGE_Y + 0.9, 0.08), dark);
-    post.position.set(s * (CAGE_R + 0.3), (CAGE_Y - 0.9) / 2, 0); post.castShadow = true; scene.add(post);
-    const foot = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.06, 0.7), dark);
-    foot.position.set(s * (CAGE_R + 0.3), -0.87, 0); foot.receiveShadow = true; scene.add(foot);
-  });
-  const crankArm = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.3, 0.04), chrome);
-  crankArm.position.set(CAGE_R + 0.4, CAGE_Y + 0.15, 0); scene.add(crankArm);
-  const knob = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.16, 12), dark);
-  knob.rotation.z = Math.PI / 2; knob.position.set(CAGE_R + 0.5, CAGE_Y + 0.3, 0); scene.add(knob);
-  // chute: an open half-pipe (trough) leaning from the cage's bottom-front opening down to
-  // the cradle, open side up so the ball is seen rolling in it. Built as a tube along a curve.
-  // Shallow slope so the ball is seen rolling rather than falling: exits the cage at its
-  // front-bottom, runs forward and down to the cradle.
-  const chutePath = new THREE.CatmullRomCurve3([
-    new THREE.Vector3(0.05, CAGE_Y - CAGE_R * 0.7, CAGE_R * 0.7),     // just inside the cage's front-bottom
-    new THREE.Vector3(0.3, CAGE_Y - CAGE_R * 0.95, CAGE_R * 0.95),
-    new THREE.Vector3(0.7, -0.5, 1.08),
-    new THREE.Vector3(CRADLE.x - 0.3, CRADLE.y - BALL_R * 0.7, CRADLE.z - 0.02),
-  ]);
-  chuteCurve = chutePath;
-  const chuteMat = chrome.clone(); chuteMat.side = THREE.DoubleSide;
-  const chute = new THREE.Mesh(troughGeometry(chutePath, BALL_R * 1.15, 28), chuteMat);
-  chute.receiveShadow = true;
-  scene.add(chute);
-  // cradle ring + tray groove
-  const cradle = new THREE.Mesh(new THREE.TorusGeometry(BALL_R * CRADLE_SCALE * 0.95, 0.025, 8, 48), brass);
-  cradle.rotation.x = Math.PI / 2; cradle.position.set(CRADLE.x, -0.86, CRADLE.z); scene.add(cradle);
-  const tray = new THREE.Mesh(new THREE.BoxGeometry(1.25, 0.04, 0.42), dark);
-  tray.position.set(-0.95, -0.88, 1.17); tray.receiveShadow = true; scene.add(tray);
-
-  ballGeo = new THREE.SphereGeometry(BALL_R, lowEnd ? 18 : 28, lowEnd ? 12 : 20);
+  ballGeo = new THREE.SphereGeometry(BALL_R, lowEnd ? 16 : 24, lowEnd ? 12 : 18);
+  bigGeo = new THREE.SphereGeometry(1, 48, 32);            // unit; scaled per use
 }
 
-/**
- * An open U-shaped trough swept along `curve`: a half-circle cross-section of radius r,
- * open side facing world-up, so a ball rolling in it is seen. Frames use world up, so the
- * opening never twists along the path.
- */
-function troughGeometry(curve, r, segs) {
-  const pos = [], nor = [], idx = [];
-  const p = new THREE.Vector3(), T = new THREE.Vector3(), S = new THREE.Vector3(), n = new THREE.Vector3();
-  const UP = new THREE.Vector3(0, 1, 0);
-  const radial = 12;
-  for (let i = 0; i <= segs; i += 1) {
-    const t = i / segs;
-    curve.getPointAt(t, p);
-    curve.getTangentAt(t, T).normalize();
-    S.crossVectors(T, UP).normalize();          // sideways
-    const D = new THREE.Vector3().crossVectors(S, T).normalize();   // "down" relative to the path, ≈ −UP
-    for (let j = 0; j <= radial; j += 1) {
-      const a = 0.35 + (j / radial) * (Math.PI - 0.7);   // a shallow U: rims below the ball's centre, so the ball shows
-      n.copy(S).multiplyScalar(Math.cos(a)).addScaledVector(D, Math.sin(a));
-      pos.push(p.x + n.x * r, p.y + n.y * r, p.z + n.z * r);
-      nor.push(-n.x, -n.y, -n.z);               // inside surface faces the ball
-    }
-  }
-  for (let i = 0; i < segs; i += 1) {
-    for (let j = 0; j < radial; j += 1) {
-      const a = i * (radial + 1) + j, b = a + radial + 1;
-      idx.push(a, b, a + 1, b, b + 1, a + 1);
-    }
-  }
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  geo.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
-  geo.setIndex(idx);
-  return geo;
-}
-
-/* =================== the pile =================== */
-/**
- * Resting seats for N balls: packed layers at the bottom of the sphere (inside radius
- * CAGE_R − BALL_R), in local cage space. Deterministic for a given N so a restore looks
- * the same as continuous play.
- */
-function assignSeats() {
-  const balls = [...cageBalls.values()].sort((a, b) => a.userData.number - b.userData.number);
-  const inner = CAGE_R - BALL_R * 1.05;
-  let i = 0, y = -inner + BALL_R;
-  while (i < balls.length) {
-    const rowR = Math.sqrt(Math.max(0, inner * inner - y * y)) - BALL_R;   // radius available at this height
-    const count = Math.max(1, Math.floor((Math.PI * rowR * rowR) / (Math.PI * BALL_R * BALL_R * 1.35)));
-    // fill this layer in rings
-    let placed = 0;
-    for (let ring = 0; placed < count && i < balls.length; ring += 1) {
-      const rr = ring * BALL_R * 2.15;
-      if (rr > rowR + 1e-6 && ring > 0) break;
-      const n = ring === 0 ? 1 : Math.floor((Math.PI * 2 * rr) / (BALL_R * 2.15));
-      for (let k = 0; k < n && i < balls.length && placed < count; k += 1, i += 1, placed += 1) {
-        const a = (k / n) * Math.PI * 2 + ring * 0.7;
-        balls[i].userData.seat.set(Math.cos(a) * rr, y, Math.sin(a) * rr);
-      }
-    }
-    y += BALL_R * 1.85;
-  }
+/* =================== pool layout =================== */
+/** Resting spots along the floor of the cylinder, packed in up to 3 layers. */
+function assignHomes() {
+  const balls = [...poolBalls.values()].sort((a, b) => a.userData.number - b.userData.number);
+  const perRow = Math.max(1, Math.floor((HALF_X * 2) / (BALL_R * 2.1)));
+  balls.forEach((m, i) => {
+    const layer = Math.floor(i / (perRow * 2)), k = i % (perRow * 2);
+    const row = k % 2, col = Math.floor(k / 2);
+    const x = -HALF_X + (col + 0.5 + row * 0.5) * (HALF_X * 2) / perRow;
+    const z = (row ? 1 : -1) * BALL_R * 0.95;
+    const yFloor = -Math.sqrt(Math.max(0, INNER * INNER - z * z));
+    m.userData.home.set(THREE.MathUtils.clamp(x, -HALF_X, HALF_X), yFloor + layer * BALL_R * 1.8, z);
+  });
 }
 
 /* =================== public API =================== */
@@ -255,7 +184,7 @@ export function mount(hostEl) {
   try {
     renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, powerPreference: 'high-performance' });
   } catch (err) {
-    console.error('3D cage unavailable:', err);
+    console.error('3D blower unavailable:', err);
     canvas.remove(); canvas = null; renderer = null;
     return false;
   }
@@ -278,63 +207,62 @@ function resize() {
   if (w < 2 || h < 2) return;
   renderer.setSize(w, h, false);
   camera.aspect = w / h;
-  // keep the whole rig (cage + tray, ~3.6 wide, ~2.9 tall) in frame whatever the aspect
-  camera.fov = camera.aspect < 1 ? 34 / camera.aspect : 34;
+  // the rig is ~3.9 wide × ~3.3 tall: fit whichever is tighter
+  const vFov = 30, hNeeded = 2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(vFov / 2)) * (3.9 / 3.3));
+  camera.fov = camera.aspect >= 3.9 / 3.3 ? vFov : THREE.MathUtils.radToDeg(2 * Math.atan(Math.tan(hNeeded / 2) / camera.aspect));
   camera.updateProjectionMatrix();
 }
 
-/**
- * Rebuild the scene to match the game: `remaining` numbers in the cage, the last of
- * `drawn` in the cradle, the three before it in the tray. No animation (restore / sync).
- */
+/** Rebuild to match the game: `remaining` in the cylinder, last of `drawn` shown, three before in the tray. */
 export function setPool(remaining, drawn) {
   if (!scene) return;
   if (drawAnim) finishDraw();
-  // Already showing exactly this? (renderCallerUi calls this after every draw.)
   const recentWant = drawn.slice(-4).reverse();
-  const recentHave = [cradleBall, ...trayBalls].filter(Boolean).map((m) => m.userData.number);
+  const recentHave = [shownBall, ...trayBalls].filter(Boolean).map((m) => m.userData.number);
   const sameRecent = recentWant.length === recentHave.length && recentWant.every((n, i) => n === recentHave[i]);
-  const sameCage = remaining.length === cageBalls.size && remaining.every((n) => cageBalls.has(n));
+  const sameCage = remaining.length === poolBalls.size && remaining.every((n) => poolBalls.has(n));
   if (sameRecent && sameCage) return;
-  // cage
+
   const want = new Set(remaining);
-  for (const [n, m] of cageBalls) if (!want.has(n)) { cage.remove(m); m.material.dispose(); cageBalls.delete(n); }
-  for (const n of remaining) if (!cageBalls.has(n)) { const m = makeBall(n); cage.add(m); cageBalls.set(n, m); }
-  assignSeats();
-  for (const m of cageBalls.values()) m.position.copy(m.userData.seat);
-  // cradle + tray
-  [cradleBall, ...trayBalls].forEach((m) => { if (m) { scene.remove(m); m.material.dispose(); } });
-  cradleBall = null; trayBalls = [];
-  const recent = drawn.slice(-4).reverse();              // newest first
-  recent.forEach((n, i) => {
-    const m = makeBall(n);
-    if (i === 0) { m.position.copy(CRADLE); m.scale.setScalar(CRADLE_SCALE); faceCamera(m); cradleBall = m; }
-    else { m.position.copy(TRAY[i - 1]); m.scale.setScalar(TRAY_SCALE[i - 1]); faceCamera(m); trayBalls.push(m); }
+  for (const [n, m] of poolBalls) if (!want.has(n)) { scene.remove(m); m.material.dispose(); poolBalls.delete(n); }
+  for (const n of remaining) if (!poolBalls.has(n)) { const m = makePoolBall(n); scene.add(m); poolBalls.set(n, m); }
+  assignHomes();
+  for (const m of poolBalls.values()) m.position.copy(m.userData.home).setY(m.userData.home.y + CYL_Y);
+
+  [shownBall, ...trayBalls].forEach((m) => { if (m) { scene.remove(m); m.material.dispose(); } });
+  shownBall = null; trayBalls = [];
+  recentWant.forEach((n, i) => {
+    const m = new THREE.Mesh(bigGeo, ballMaterial(n));
+    m.castShadow = true; m.userData.number = n;
+    if (i === 0) { m.position.copy(SHOW); m.scale.setScalar(SHOW_R); shownBall = m; }
+    else { m.position.copy(TRAY[i - 1]); m.scale.setScalar(TRAY_R); trayBalls.push(m); }
+    faceCamera(m);
     scene.add(m);
   });
-  tumble = 0; spinTarget = 0.15;
+  churn = 0;
 }
 
-/** Turn a ball so one of its two numbers faces the camera squarely. */
-function faceCamera(m) {
-  // SphereGeometry maps texture u=0.25 (the first number) to +z, i.e. straight at the
-  // camera, with identity rotation; just tilt it up a little toward the raised camera.
-  m.quaternion.identity();
-  m.rotateX(-0.22);
-}
+/** SphereGeometry puts texture u=0.25 (the first number) at +z: identity faces the camera. */
+function faceCamera(m) { m.quaternion.identity(); m.rotateX(-0.08); }
 
 /**
- * Draw `number`: spin up, tumble, drop the ball through the chute into the cradle, and
- * shift the tray. Resolves when the ball is seated (DRAW_MS).
+ * Draw `number`: churn hard, drop the ball through the floor hole, let it fall and settle
+ * as the shown ball, and shift the tray. Resolves once it has settled (DRAW_MS).
  */
 export function draw(number) {
   if (!scene) return Promise.resolve();
   if (drawAnim) finishDraw();
-  let ball = cageBalls.get(number);
-  if (!ball) { ball = makeBall(number); cage.add(ball); cageBalls.set(number, ball); }   // defensive: always something to drop
+  let ball = poolBalls.get(number);
+  if (!ball) { ball = makePoolBall(number); scene.add(ball); poolBalls.set(number, ball); }
   return new Promise((resolve) => {
-    drawAnim = { start: performance.now(), number, ball, resolve, phase: 0, prevCradle: cradleBall, prevTray: trayBalls.slice(), exiting: null };
-    cradleBall = null;
+    drawAnim = {
+      start: performance.now(), number, ball, resolve, phase: 0,
+      prevShown: shownBall, prevTray: trayBalls.slice(),
+      // spin it arrives with, decaying to a stop as it settles face-on
+      spinAxis: new THREE.Vector3(Math.random() - 0.5, 1, Math.random() - 0.5).normalize(),
+      spinRate: 16 + Math.random() * 6,
+    };
+    shownBall = null;
     drawAnim.timer = setTimeout(finishDraw, DRAW_MS + 100);
   });
 }
@@ -342,111 +270,134 @@ export function draw(number) {
 function finishDraw() {
   const a = drawAnim; if (!a) return;
   drawAnim = null; clearTimeout(a.timer);
-  // final state, exactly as setPool would leave it
+  // the drawn pool ball becomes the shown ball (swap to the big geometry)
   const b = a.ball;
-  if (b.parent === cage) { cage.remove(b); cageBalls.delete(a.number); scene.add(b); }
-  b.position.copy(CRADLE); b.scale.setScalar(CRADLE_SCALE); faceCamera(b); cradleBall = b;
-  const tray = [a.prevCradle, ...a.prevTray].filter(Boolean);
+  poolBalls.delete(a.number);
+  b.geometry = bigGeo; b.scale.setScalar(SHOW_R);
+  b.position.copy(SHOW); faceCamera(b); shownBall = b;
+  const tray = [a.prevShown, ...a.prevTray].filter(Boolean);
   tray.forEach((m, i) => {
     if (i >= 3) { scene.remove(m); m.material.dispose(); return; }
-    m.position.copy(TRAY[i]); m.scale.setScalar(TRAY_SCALE[i]); faceCamera(m);
+    m.position.copy(TRAY[i]); m.scale.setScalar(TRAY_R); faceCamera(m);
+    m.material.transparent = false; m.material.opacity = 1;
   });
   trayBalls = tray.slice(0, 3);
-  assignSeats();
-  tumble = 0; spinTarget = 0.15;
+  assignHomes();
+  churn = 0;
   a.resolve();
 }
 
 /* =================== per-frame =================== */
 const easeInOut = (t) => (t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t);
-const easeOut = (t) => 1 - Math.pow(1 - t, 3);
 const clamp01 = (t) => Math.max(0, Math.min(1, t));
 
 function frame(now) {
   rafId = requestAnimationFrame(frame);
   const dt = Math.min(0.05, (now - last) / 1000); last = now;
   if (drawAnim) tickDraw(now, dt);
-  // cage spin
-  spin += (spinTarget - spin) * Math.min(1, dt * 4);
-  cage.rotation.x += spin * dt;
-  // balls: blend between resting seats (counter-rotated so the pile stays at the bottom
-  // while the cage turns) and a tumbling orbit
-  const invCage = tmpV;   // reuse
-  const t = now / 1000;
-  for (const m of cageBalls.values()) {
-    if (drawAnim && m === drawAnim.ball && drawAnim.phase >= 1) continue;
-    const u = m.userData;
-    // seat in world = cage.position + seat (pile does not rotate with the cage)
-    const seat = u.seat;
-    // tumbling position: swept up the wall in the spin direction, jittering
-    const ang = u.phase + t * (2.2 + spin * 0.8) * u.rate;
-    const r = (CAGE_R - BALL_R * 1.3) * (0.55 + 0.45 * Math.sin(ang * 0.7 + u.phase));
-    const tx = seat.x * 0.6, ty = Math.sin(ang) * r * 0.9, tz = Math.cos(ang) * r;
-    // local position must be expressed in cage space (which rotates): counter-rotate the world offset
-    invCage.set(seat.x + (tx - seat.x) * tumble, seat.y + (ty - seat.y) * tumble, seat.z + (tz - seat.z) * tumble);
-    invCage.applyAxisAngle(new THREE.Vector3(1, 0, 0), -cage.rotation.x);
-    m.position.copy(invCage);
-    m.rotation.x -= spin * dt * 3 * (0.3 + tumble);
-  }
+  swarm(now / 1000, dt);
   if (document.hidden || !canvas || canvas.clientWidth === 0) return;
   renderer.render(scene, camera);
 }
 
+/**
+ * The balls inside the cylinder. Idle: they rest near their home spots on the floor with a
+ * slow lazy drift. Churning: each rides its own looping path around the cylinder's cross-
+ * section and along its length, at a speed set by `churn`, always kept inside the glass.
+ */
+function swarm(t, dt) {
+  for (const m of poolBalls.values()) {
+    if (drawAnim && m === drawAnim.ball && drawAnim.phase >= 1) continue;
+    const u = m.userData, h = u.home;
+    // idle drift: tiny bob and slide around home
+    const ix = h.x + Math.sin(t * 0.6 * u.rate + u.phase) * 0.05;
+    const iy = h.y + Math.abs(Math.sin(t * 1.1 * u.rate + u.phase)) * 0.04;
+    const iz = h.z + Math.cos(t * 0.5 * u.rate + u.phase) * 0.03;
+    // churn: a fast loop around the section (angle a) while sweeping along x
+    const a = u.phase + t * (5 + 3 * u.rate) ;
+    const r = INNER * (0.35 + 0.6 * (0.5 + 0.5 * Math.sin(t * 2.3 * u.rate + u.phase)));
+    const cx = THREE.MathUtils.clamp(h.x + Math.sin(t * 1.7 * u.rate + u.phase * 2) * HALF_X * 0.8, -HALF_X, HALF_X);
+    const cy = Math.sin(a) * r, cz = Math.cos(a) * r;
+    tmpV.set(ix + (cx - ix) * churn, iy + (cy - iy) * churn, iz + (cz - iz) * churn);
+    // never outside the glass
+    const rr = Math.hypot(tmpV.y, tmpV.z);
+    if (rr > INNER) { tmpV.y *= INNER / rr; tmpV.z *= INNER / rr; }
+    m.position.set(tmpV.x, CYL_Y + tmpV.y, tmpV.z);
+    m.rotateOnAxis(u.spin, dt * (0.6 + 14 * churn));
+  }
+}
+
 function tickDraw(now, dt) {
   const a = drawAnim;
-  const k = clamp01((now - a.start) / DRAW_MS);
-  // 0.00–0.35 spin up + tumble; 0.35–0.60 slow, chosen ball to the chute mouth;
-  // 0.60–0.85 drop through chute into the cradle; 0.60–1.00 tray shift
-  if (k < 0.35) {
-    spinTarget = 5.5; tumble = Math.min(1, tumble + dt * 4);
-  } else if (k < 0.6) {
-    spinTarget = 1.2; tumble = Math.max(0, tumble - dt * 2.5);
-    if (a.phase < 1) {
-      a.phase = 1;
-      // hand the ball to the scene so it is no longer carried by the cage
-      const wp = a.ball.getWorldPosition(new THREE.Vector3());
-      cage.remove(a.ball); cageBalls.delete(a.number); scene.add(a.ball); a.ball.position.copy(wp);
-      a.from = wp.clone();
+  const tSec = (now - a.start) / 1000;
+  const b = a.ball;
+  if (tSec < T_CHURN) {
+    /* ---- air on: everything churns; the chosen ball is steered to the floor hole ---- */
+    churn = Math.min(1, churn + dt * 3);
+    const k = tSec / T_CHURN;
+    if (k > 0.55) {
+      if (a.phase < 1) { a.phase = 1; a.from = b.position.clone(); }
+      const s = easeInOut((k - 0.55) / 0.45);
+      tmpV.set(0, CYL_Y - INNER, 0);           // sitting over the hole
+      b.position.lerpVectors(a.from, tmpV, s);
+      b.rotateOnAxis(a.spinAxis, dt * 10);
     }
-    const s = easeInOut((k - 0.35) / 0.25);
-    // to the chute mouth at the bottom-front of the cage
-    tmpV.set(0.05, CAGE_Y - CAGE_R * 0.7 + BALL_R * 0.4, CAGE_R * 0.7);
-    a.ball.position.lerpVectors(a.from, tmpV, s);
-    a.ball.rotation.x += dt * 8;
+  } else if (tSec < T_CHURN + T_DROP) {
+    /* ---- drop: through the collar, free fall, one bounce on the pedestal, growing to size ---- */
+    if (a.phase < 2) {
+      a.phase = 2; churn = 0.35;                // air off; the rest settle
+      poolBalls.delete(a.number);               // no longer part of the swarm
+      b.geometry = bigGeo; b.scale.setScalar(BALL_R);
+    }
+    const u = tSec - T_CHURN, k = u / T_DROP;
+    const y0 = CYL_Y - INNER, y1 = SHOW.y;
+    // fall under gravity chosen so the first bounce lands exactly at T_DROP*0.7, then a small hop
+    const tLand = T_DROP * 0.7;
+    const g = 2 * (y0 - y1) / (tLand * tLand);
+    let y;
+    if (u < tLand) y = y0 - 0.5 * g * u * u;
+    else { const v = (u - tLand) / (T_DROP - tLand); y = y1 + Math.sin(v * Math.PI) * 0.16 * (1 - v * 0.5); }
+    b.position.set(SHOW.x * k, y, SHOW.z * k);
+    b.scale.setScalar(BALL_R + (SHOW_R - BALL_R) * easeInOut(Math.min(1, k * 1.3)));
+    b.rotateOnAxis(a.spinAxis, dt * a.spinRate);
+    // tray shifts while the ball falls
+    shiftTray(easeInOut(k));
   } else {
-    spinTarget = 0.15;
-    const s = clamp01((k - 0.6) / 0.25);
-    const e = easeOut(s);
-    // down the chute (a quarter-arc) to the cradle
-    // rides the chute's own curve, sitting on its floor, growing to cradle size on the way
-    chuteCurve.getPointAt(e, tmpV);
-    tmpV.y += BALL_R * (0.7 + 0.6 * e);
-    a.ball.position.copy(tmpV);
-    a.ball.scale.setScalar(1 + (CRADLE_SCALE - 1) * e);
-    // rolling down: turn about x, then snap the number to the camera as it seats
-    if (s < 1) { a.ball.rotation.x += dt * 9 * (1 - s); a.ball.rotation.z -= dt * 4 * (1 - s); }
-    else faceCamera(a.ball);
-    // tray shift: previous cradle → slot 0, slots shift, last one exits and fades
-    const ts = easeInOut(clamp01((k - 0.6) / 0.4));
-    const chain = [a.prevCradle, ...a.prevTray].filter(Boolean);
-    chain.forEach((m, i) => {
-      const from = i === 0 ? CRADLE : TRAY[i - 1];
-      const fromS = i === 0 ? CRADLE_SCALE : TRAY_SCALE[i - 1];
-      const to = i < 3 ? TRAY[i] : TRAY_EXIT;
-      const toS = i < 3 ? TRAY_SCALE[i] : 0.3;
-      m.position.lerpVectors(from, to, ts);
-      m.scale.setScalar(fromS + (toS - fromS) * ts);
-      if (i >= 3) { m.material.transparent = true; m.material.opacity = 1 - ts; }
-    });
+    /* ---- settle: spin dies, the number turns to face the room ---- */
+    if (a.phase < 3) { a.phase = 3; a.qFrom = b.quaternion.clone(); a.qTo = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -0.08); }
+    churn = Math.max(0, churn - dt * 1.2);
+    const k = clamp01((tSec - T_CHURN - T_DROP) / T_SETTLE);
+    b.position.copy(SHOW);
+    b.scale.setScalar(SHOW_R);
+    // keep spinning, slower, then slerp the last part onto the face-on pose
+    if (k < 0.5) b.rotateOnAxis(a.spinAxis, dt * a.spinRate * (1 - k * 2));
+    if (k >= 0.5) { if (!a.qMid) a.qMid = b.quaternion.clone(); b.quaternion.slerpQuaternions(a.qMid, a.qTo, easeInOut((k - 0.5) * 2)); }
+    shiftTray(1);
+    if (tSec >= T_CHURN + T_DROP + T_SETTLE) finishDraw();
   }
-  if (k >= 1) finishDraw();
+}
+
+/** Previous shown ball → tray slot 0, others along, the oldest off the end and fading. */
+function shiftTray(ts) {
+  const a = drawAnim;
+  const chain = [a.prevShown, ...a.prevTray].filter(Boolean);
+  chain.forEach((m, i) => {
+    const from = i === 0 ? SHOW : TRAY[i - 1];
+    const fromS = i === 0 ? SHOW_R : TRAY_R;
+    const to = i < 3 ? TRAY[i] : TRAY_EXIT;
+    const toS = i < 3 ? TRAY_R : TRAY_R * 0.6;
+    m.position.lerpVectors(from, to, ts);
+    m.position.y += Math.sin(ts * Math.PI) * 0.12;      // a small hop between slots
+    m.scale.setScalar(fromS + (toS - fromS) * ts);
+    if (i >= 3) { m.material.transparent = true; m.material.opacity = 1 - ts; }
+  });
 }
 
 export function dispose() {
   if (rafId) cancelAnimationFrame(rafId); rafId = 0;
   if (drawAnim) finishDraw();
   textures.forEach((t) => t.dispose()); textures.clear();
-  renderer?.dispose(); renderer = null; scene = null; cage = null;
-  cageBalls = new Map(); cradleBall = null; trayBalls = [];
+  renderer?.dispose(); renderer = null; scene = null;
+  poolBalls = new Map(); shownBall = null; trayBalls = [];
   canvas?.remove(); canvas = null;
 }

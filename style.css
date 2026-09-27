@@ -446,8 +446,9 @@ body[data-mode="tv"] #tv-create { justify-content: center; }
 .tv-caller-ball.has-cage {
   background: none;
   border-radius: 0;
-  width: clamp(360px, 84svh, 110svh);
-  height: clamp(320px, 62svh, 80svh);
+  /* the rig is a column: glass cylinder → drawn ball → tray (about 6:5) */
+  width: clamp(360px, 74svh, 96svh);
+  height: clamp(300px, 62svh, 80svh);
   max-width: 100%;
 }
 .tv-caller-ball.has-cage .tv-current-number {
@@ -1061,8 +1062,8 @@ body[data-mode="phone"] .screen { max-width: 480px; margin: 0 auto; }
    * and push every other row off-screen. min(80vw, 60svh) keeps the ball
    * proportional in both portrait and landscape. */
   body[data-mode="tv"] .tv-caller-ball.has-cage {
-    width: min(96vw, 80svh);
-    height: min(70vw, 58svh);
+    width: min(96vw, 72svh);
+    height: min(82vw, 60svh);
   }
   body[data-mode="tv"] .tv-caller-ball {
     width: min(80vw, 60svh);
