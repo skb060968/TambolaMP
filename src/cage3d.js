@@ -237,9 +237,13 @@ function resize() {
   if (w < 2 || h < 2) return;
   renderer.setSize(w, h, false);
   camera.aspect = w / h;
-  // the rig is ~3.9 wide × ~3.3 tall: fit whichever is tighter
-  const vFov = 30, hNeeded = 2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(vFov / 2)) * (3.9 / 3.3));
-  camera.fov = camera.aspect >= 3.9 / 3.3 ? vFov : THREE.MathUtils.radToDeg(2 * Math.atan(Math.tan(hNeeded / 2) / camera.aspect));
+  // Fit the rig (cylinder with caps ≈ 3.3 wide incl. margin, column ≈ 3.3 tall) whatever
+  // the box's aspect: on a portrait phone the WIDTH is the binding constraint, so the
+  // vertical fov opens up until the cylinder's end caps are inside the frame.
+  const RIG_W = 3.35, RIG_H = 3.3, vFov = 30;
+  const tanV = Math.tan(THREE.MathUtils.degToRad(vFov / 2));
+  const tanNeededForWidth = (tanV * (RIG_W / RIG_H)) / camera.aspect;   // half-height tan that makes RIG_W fit
+  camera.fov = THREE.MathUtils.radToDeg(2 * Math.atan(Math.max(tanV, tanNeededForWidth)));
   camera.updateProjectionMatrix();
 }
 
@@ -307,6 +311,7 @@ function finishDraw() {
   b.position.copy(SHOW); faceCamera(b); shownBall = b;
   const tray = [a.prevShown, ...a.prevTray].filter(Boolean);
   tray.forEach((m, i) => {
+    delete m.userData.shiftFrom; delete m.userData.shiftQ; delete m.userData.shiftS;
     if (i >= 3) { scene.remove(m); m.material.dispose(); return; }
     m.position.copy(TRAY[i]); m.scale.setScalar(TRAY_R); faceCamera(m);
     m.material.transparent = false; m.material.opacity = 1;
@@ -417,19 +422,55 @@ function tickDraw(now, dt) {
   }
 }
 
-/** Previous shown ball → tray slot 0, others along, the oldest off the end and fading. */
+/**
+ * Previous shown ball → tray slot 0, others one along, the oldest off the end and fading.
+ * The shown ball DROPS off its pedestal: falls, lands on the tray with a bounce, then rolls
+ * into its slot (rolling about the axis across its travel, at the right rate for its
+ * radius). The tray balls roll one slot along the same way; the last one rolls off the edge
+ * and tumbles away.
+ */
 function shiftTray(ts) {
   const a = drawAnim;
   const chain = [a.prevShown, ...a.prevTray].filter(Boolean);
+  const ROLL_AXIS = new THREE.Vector3(0, 0, 1);         // travel is along +x, so roll about z
   chain.forEach((m, i) => {
-    const from = i === 0 ? SHOW : TRAY[i - 1];
-    const fromS = i === 0 ? SHOW_R : TRAY_R;
     const to = i < 3 ? TRAY[i] : TRAY_EXIT;
+    if (!m.userData.shiftFrom) {                        // capture where it started, once per draw
+      m.userData.shiftFrom = m.position.clone();
+      m.userData.shiftQ = m.quaternion.clone();
+      m.userData.shiftS = m.scale.x;
+    }
+    const from = m.userData.shiftFrom, fromS = m.userData.shiftS;
     const toS = i < 3 ? TRAY_R : TRAY_R * 0.6;
-    m.position.lerpVectors(from, to, ts);
-    m.position.y += Math.sin(ts * Math.PI) * 0.12;      // a small hop between slots
-    m.scale.setScalar(fromS + (toS - fromS) * ts);
-    if (i >= 3) { m.material.transparent = true; m.material.opacity = 1 - ts; }
+    const s = fromS + (toS - fromS) * Math.min(1, ts * 1.6);
+    m.scale.setScalar(s);
+    if (i === 0) {
+      // the shown ball: fall first (0–45 %), bounce, then roll along the tray (45–100 %)
+      const fall = clamp01(ts / 0.45), roll = clamp01((ts - 0.45) / 0.55);
+      const landY = to.y;
+      const dropY = from.y - (from.y - landY) * (fall * fall);         // accelerating fall
+      const bounce = fall >= 1 ? Math.sin(roll * Math.PI) * 0.18 * Math.max(0, 1 - roll * 1.6) : 0;
+      const x = from.x + (to.x - from.x) * easeInOut(roll);
+      const z = from.z + (to.z - from.z) * clamp01(fall);
+      m.position.set(x, dropY + bounce, z);
+      // roll: distance travelled / radius, about z (sign so it rolls forward along −x)
+      const dist = Math.abs(to.x - from.x) * easeInOut(roll);
+      m.quaternion.copy(m.userData.shiftQ);
+      m.rotateOnWorldAxis(ROLL_AXIS, (to.x < from.x ? 1 : -1) * dist / Math.max(0.05, s));
+    } else {
+      // tray balls: roll one slot along, with a small lift over the gap
+      const e = easeInOut(ts);
+      m.position.lerpVectors(from, to, e);
+      m.position.y += Math.sin(ts * Math.PI) * 0.06;
+      const dist = Math.abs(to.x - from.x) * e;
+      m.quaternion.copy(m.userData.shiftQ);
+      m.rotateOnWorldAxis(ROLL_AXIS, -dist / Math.max(0.05, s));
+      if (i >= 3) {                                     // off the edge: tumble and fade
+        m.position.y -= (ts * ts) * 0.5;
+        m.rotateOnWorldAxis(new THREE.Vector3(1, 0, 0), ts * 3);
+        m.material.transparent = true; m.material.opacity = 1 - ts;
+      }
+    }
   });
 }
 

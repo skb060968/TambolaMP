@@ -1058,13 +1058,25 @@ body[data-mode="phone"] .screen { max-width: 480px; margin: 0 auto; }
   }
   body[data-mode="tv"] .tv-controls .btn { width: 100%; max-width: 100%; }
 
-  /* Cap the ball at viewport width so it doesn't blow out the grid track
-   * and push every other row off-screen. min(80vw, 60svh) keeps the ball
-   * proportional in both portrait and landscape. */
+  /* Phone host, portrait: the column is title → 3D rig → controls → 15-column grid, all in
+   * one 100svh screen. The rig gets whatever is left after the fixed rows (≈ 47svh on a
+   * typical phone); at ~6:5 the cylinder still fills the width and nothing is clipped. */
+  body[data-mode="tv"] .tv-game-screen { padding: 8px 6px; gap: 6px; }
+  body[data-mode="tv"] .tv-game-header .tv-title { font-size: 1rem; letter-spacing: 2px; }
+  /* the grid track was `auto`, so the rig set the width and overflowed the viewport; pin it */
+  body[data-mode="tv"] .tv-game-body { grid-template-columns: minmax(0, 1fr); gap: 0; align-items: start; }
+  body[data-mode="tv"] .tv-caller { gap: 6px; min-height: 0; width: 100%; max-width: 100%; justify-content: flex-start; }
   body[data-mode="tv"] .tv-caller-ball.has-cage {
-    width: min(96vw, 72svh);
-    height: min(82vw, 60svh);
+    width: 100%;
+    max-width: 100%;
+    height: min(78vw, 46svh);
+    flex: 0 1 auto;
   }
+  body[data-mode="tv"] .tv-game-controls { gap: 5px; width: 100%; flex-wrap: wrap; justify-content: center; }
+  body[data-mode="tv"] .tv-game-controls .btn { padding: 7px 9px; font-size: 0.78rem; flex: 0 1 auto; }
+  body[data-mode="tv"] .tv-game-controls .speed-select { padding: 6px 6px; font-size: 0.78rem; }
+  /* Cap the CSS fallback ball at viewport width so it doesn't blow out the grid track
+   * and push every other row off-screen. */
   body[data-mode="tv"] .tv-caller-ball {
     width: min(80vw, 60svh);
     height: min(80vw, 60svh);
@@ -1077,16 +1089,22 @@ body[data-mode="phone"] .screen { max-width: 480px; margin: 0 auto; }
    * the lobby, and full names appear on the results screen. */
   body[data-mode="tv"] .tv-players-side { display: none; }
 
-  /* Phone-host called grid stays 3×30. Center it and squeeze the gap so
-   * all 30 columns actually fit inside the viewport without clipping. */
+  /* Phone-host called grid: 15 columns × 6 rows (1–15 on the first row, then 16–30 …), so
+   * each cell is ~6 vw wide and the digits stay legible in portrait; 3 × 30 was unreadable. */
   body[data-mode="tv"] .tv-called-grid {
-    gap: 1px;
+    grid-template-columns: repeat(15, minmax(0, 1fr));
+    gap: 2px;
     padding: 4px;
     margin: 0 auto;
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
   }
   body[data-mode="tv"] .tv-called-grid .called-cell {
-    font-size: clamp(0.45rem, 1.5vw, 0.7rem);
+    font-size: clamp(0.55rem, 2.6vw, 0.85rem);
+    border-radius: 2px;
   }
+  body[data-mode="tv"] .tv-called-grid .called-cell.latest { transform: scale(1.1); }
 }
 
 /* ==========================================================================
