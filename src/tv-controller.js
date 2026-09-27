@@ -31,6 +31,9 @@ import {
   createGameState, drawNumber, awardClaim, evaluateClaim, reconstructFromFirebase,
 } from './game-engine.js';
 import { PATTERNS, PATTERN_LABELS } from './claim-validator.js';
+import * as cage3d from './cage3d.js';
+
+let _cageOn = null;              // null = not tried yet; true = 3D cage mounted; false = CSS ball fallback
 
 import {
   initAudio, playSound, speakNumber, isMuted, toggleMute,
@@ -205,6 +208,7 @@ function attachRoomListener() {
           drawnNumbers: [...game.drawnNumbers],
           remainingPool: state.remainingPool.filter((n) => !game.drawnNumbers.includes(n)),
         };
+        renderCallerUi();          // cage follows the synced state
       }
     },
     onMarksChange: (marks) => {
@@ -417,6 +421,7 @@ async function startRound() {
 
 /* ======= GAME UI ======= */
 function setupGameUi() {
+  ensureCage();
   renderCallerUi();
   renderCalledGrid();
   renderPlayersSides();
@@ -518,9 +523,11 @@ async function doDraw() {
   const nextButton = document.getElementById('btn-tv-next');
   if (nextButton) nextButton.disabled = true;
   playSound('draw', 0.5);
-  animateBall(result.number);
+  // The 3D cage tumbles and drops the ball into the cradle (~1.7 s); the CSS ball is the
+  // fallback (0.7 s). The Firebase write and the announcement wait for the ball to land.
+  const shown = _cageOn ? cage3d.draw(result.number) : (animateBall(result.number), wait(700));
 
-  setTimeout(async () => {
+  shown.then(async () => {
     try {
       await broadcastDraw(roomCode, result.newState.drawnNumbers, result.number);
       state = result.newState;
@@ -531,13 +538,26 @@ async function doDraw() {
     } catch (error) {
       console.warn('broadcastDraw failed:', error.message);
       showToast('Draw was not saved. Please try again.');
-      renderCallerUi();
+      renderCallerUi();          // also puts the ball back in the cage: state did not advance
       renderCalledGrid();
     } finally {
       _drawPending = false;
       if (nextButton) nextButton.disabled = false;
     }
-  }, 700);
+  });
+}
+
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** Mount the 3D cage into the caller box (once). Falls back to the CSS ball if WebGL fails. */
+function ensureCage() {
+  const box = document.getElementById('tv-caller-ball');
+  if (!box) return;
+  if (_cageOn == null) {
+    _cageOn = cage3d.mount(box);
+    box.classList.toggle('has-cage', _cageOn);
+  }
+  if (_cageOn && state) cage3d.setPool(state.remainingPool, state.drawnNumbers);
 }
 
 function toggleAutoCall() {
@@ -578,6 +598,9 @@ function renderCallerUi() {
   } else {
     numEl.textContent = '—';
   }
+  // Keep the cage in step with the authoritative state (no-op right after a successful
+  // draw, since the animation already left the scene in exactly this state).
+  if (_cageOn && state) cage3d.setPool(state.remainingPool, state.drawnNumbers);
 }
 
 function renderCalledGrid() {

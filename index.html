@@ -81,6 +81,8 @@
       <div class="tv-game-body">
         <div class="tv-players-side tv-players-left" id="tv-players-left"></div>
         <div class="tv-caller">
+          <!-- The 3D cage (cage3d.js) mounts a canvas inside this box; the number span stays
+               for screen readers and as the visible fallback if WebGL is unavailable. -->
           <div id="tv-caller-ball" class="tv-caller-ball ball-sphere" role="img" aria-label="Current called number">
             <span id="tv-current-number" class="tv-current-number ball-number">—</span>
           </div>
