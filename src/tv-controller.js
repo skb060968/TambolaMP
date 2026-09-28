@@ -468,6 +468,10 @@ function renderPlayersSides() {
   };
   renderInto(left, 0, half);
   renderInto(right, half, total);
+  // Phone host: the side columns are hidden by CSS, so the same cards go in one strip
+  // between the controls and the grid (shown/hidden by the same media query).
+  const strip = document.getElementById('tv-players-strip');
+  if (strip) { renderInto(strip, 0, total); strip.hidden = total === 0; strip.classList.toggle('cols-2', total > 3); }
 }
 
 function wireTvGame() {

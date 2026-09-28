@@ -85,9 +85,11 @@ function ballTexture(n) {
 
 /** Glossy resin, like the house balls on the bowling lane. */
 function ballMaterial(n) {
+  // Satin rather than mirror gloss: a hard clearcoat put the key light's glare right across
+  // the number patch. Still reads as resin, but the digits stay clear.
   return new THREE.MeshPhysicalMaterial({
-    map: ballTexture(n), roughness: 0.22, metalness: 0,
-    clearcoat: 1, clearcoatRoughness: 0.08, specularIntensity: 1,
+    map: ballTexture(n), roughness: 0.38, metalness: 0,
+    clearcoat: 0.45, clearcoatRoughness: 0.35, specularIntensity: 0.6,
   });
 }
 
@@ -110,7 +112,7 @@ function buildScene() {
   scene = new THREE.Scene();
   const pmrem = new THREE.PMREMGenerator(renderer);
   scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-  scene.environmentIntensity = 0.6;
+  scene.environmentIntensity = 0.45;
   pmrem.dispose();
 
   camera = new THREE.PerspectiveCamera(30, 1, 0.1, 50);
@@ -119,7 +121,7 @@ function buildScene() {
 
   scene.add(new THREE.HemisphereLight(0xffffff, 0x445566, 0.5));
   const key = new THREE.DirectionalLight(0xfff2e0, 2.0);
-  key.position.set(-2.5, 4, 4); key.castShadow = true;
+  key.position.set(-4, 4.5, 2.2); key.castShadow = true;   // well off to the side: its highlight lands beside the number patch, not on it
   key.shadow.mapSize.set(lowEnd ? 1024 : 2048, lowEnd ? 1024 : 2048);
   key.shadow.camera.left = -3; key.shadow.camera.right = 3; key.shadow.camera.top = 3; key.shadow.camera.bottom = -3;
   key.shadow.camera.near = 1; key.shadow.camera.far = 14; key.shadow.bias = -0.0005; key.shadow.normalBias = 0.02;
@@ -404,8 +406,9 @@ function tickDraw(now, dt) {
     b.scale.setScalar(BALL_R + (SHOW_R - BALL_R) * easeInOut(Math.min(1, k * 1.3)));
     b.rotateOnAxis(a.spinAxis, dt * a.spinRate);
     if (k > 0.3) hatchOpen = Math.max(0, hatchOpen - dt * 3);          // lid swings shut behind it
-    // tray shifts while the ball falls
-    shiftTray(easeInOut(k));
+    // the tray sequence runs across the drop AND the settle (tray hops first, then the old
+    // shown ball hops into the cleared slot), so progress is measured over both phases
+    shiftTray(clamp01(u / (T_DROP + T_SETTLE)));
   } else {
     /* ---- settle: spin dies, the number turns to face the room ---- */
     if (a.phase < 3) { a.phase = 3; a.qFrom = b.quaternion.clone(); a.qTo = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -0.08); }
@@ -417,22 +420,23 @@ function tickDraw(now, dt) {
     // keep spinning, slower, then slerp the last part onto the face-on pose
     if (k < 0.5) b.rotateOnAxis(a.spinAxis, dt * a.spinRate * (1 - k * 2));
     if (k >= 0.5) { if (!a.qMid) a.qMid = b.quaternion.clone(); b.quaternion.slerpQuaternions(a.qMid, a.qTo, easeInOut((k - 0.5) * 2)); }
-    shiftTray(1);
+    shiftTray(clamp01((tSec - T_CHURN) / (T_DROP + T_SETTLE)));
     if (tSec >= T_CHURN + T_DROP + T_SETTLE) finishDraw();
   }
 }
 
 /**
  * Previous shown ball → tray slot 0, others one along, the oldest off the end and fading.
- * The shown ball DROPS off its pedestal: falls, lands on the tray with a bounce, then rolls
- * into its slot (rolling about the axis across its travel, at the right rate for its
- * radius). The tray balls roll one slot along the same way; the last one rolls off the edge
- * and tumbles away.
+ * Sequenced so nothing crosses: first (0–55 %) the tray balls hop one slot to the right,
+ * clearing slot 0 and tipping the oldest off the end; then (45–100 %) the shown ball hops
+ * in a single arc from its pedestal straight into the now-empty slot 0. Every hop is
+ * exactly ONE full turn about the VERTICAL axis, so the number faces the room again on
+ * landing (a horizontal roll would leave it upside down).
  */
 function shiftTray(ts) {
   const a = drawAnim;
   const chain = [a.prevShown, ...a.prevTray].filter(Boolean);
-  const ROLL_AXIS = new THREE.Vector3(0, 0, 1);         // travel is along +x, so roll about z
+  const UP = new THREE.Vector3(0, 1, 0);
   chain.forEach((m, i) => {
     const to = i < 3 ? TRAY[i] : TRAY_EXIT;
     if (!m.userData.shiftFrom) {                        // capture where it started, once per draw
@@ -442,34 +446,20 @@ function shiftTray(ts) {
     }
     const from = m.userData.shiftFrom, fromS = m.userData.shiftS;
     const toS = i < 3 ? TRAY_R : TRAY_R * 0.6;
-    const s = fromS + (toS - fromS) * Math.min(1, ts * 1.6);
-    m.scale.setScalar(s);
-    if (i === 0) {
-      // the shown ball: fall first (0–45 %), bounce, then roll along the tray (45–100 %)
-      const fall = clamp01(ts / 0.45), roll = clamp01((ts - 0.45) / 0.55);
-      const landY = to.y;
-      const dropY = from.y - (from.y - landY) * (fall * fall);         // accelerating fall
-      const bounce = fall >= 1 ? Math.sin(roll * Math.PI) * 0.18 * Math.max(0, 1 - roll * 1.6) : 0;
-      const x = from.x + (to.x - from.x) * easeInOut(roll);
-      const z = from.z + (to.z - from.z) * clamp01(fall);
-      m.position.set(x, dropY + bounce, z);
-      // roll: distance travelled / radius, about z (sign so it rolls forward along −x)
-      const dist = Math.abs(to.x - from.x) * easeInOut(roll);
-      m.quaternion.copy(m.userData.shiftQ);
-      m.rotateOnWorldAxis(ROLL_AXIS, (to.x < from.x ? 1 : -1) * dist / Math.max(0.05, s));
-    } else {
-      // tray balls: roll one slot along, with a small lift over the gap
-      const e = easeInOut(ts);
-      m.position.lerpVectors(from, to, e);
-      m.position.y += Math.sin(ts * Math.PI) * 0.06;
-      const dist = Math.abs(to.x - from.x) * e;
-      m.quaternion.copy(m.userData.shiftQ);
-      m.rotateOnWorldAxis(ROLL_AXIS, -dist / Math.max(0.05, s));
-      if (i >= 3) {                                     // off the edge: tumble and fade
-        m.position.y -= (ts * ts) * 0.5;
-        m.rotateOnWorldAxis(new THREE.Vector3(1, 0, 0), ts * 3);
-        m.material.transparent = true; m.material.opacity = 1 - ts;
-      }
+    // local progress: tray balls go first, the shown ball follows once slot 0 is clear
+    const k = i === 0 ? clamp01((ts - 0.45) / 0.55) : clamp01(ts / 0.55);
+    const e = easeInOut(k);
+    m.scale.setScalar(fromS + (toS - fromS) * e);
+    m.position.lerpVectors(from, to, e);
+    // the hop: the shown ball's is a real fall (high start), the tray hops are small
+    const lift = i === 0 ? 0.35 : 0.14;
+    m.position.y += Math.sin(k * Math.PI) * lift;
+    // one full turn about vertical over the hop, so the number is back at the front
+    m.quaternion.copy(m.userData.shiftQ);
+    m.rotateOnWorldAxis(UP, e * Math.PI * 2);
+    if (i >= 3) {                                       // off the edge: drop away and fade
+      m.position.y -= k * k * 0.6;
+      m.material.transparent = true; m.material.opacity = 1 - k;
     }
   });
 }
