@@ -398,7 +398,13 @@ body[data-mode="tv"] #tv-create { justify-content: center; }
   gap: 8px;
   font-weight: 700;
 }
-.tv-player-card.disconnected { opacity: 0.4; }
+.tv-player-card.disconnected { opacity: 0.55; }
+.tv-player-card .pc-off {
+  flex-shrink: 0;
+  font-size: 0.62rem; font-weight: 800; letter-spacing: 0.06em;
+  color: #fff; background: rgba(255, 77, 77, 0.9);
+  padding: 1px 6px; border-radius: 999px;
+}
 .tv-player-card .pc-emoji { font-size: 1.2rem; flex-shrink: 0; }
 .tv-player-card .pc-name {
   flex: 1;

@@ -372,9 +372,12 @@ function tickDraw(now, dt) {
   const tSec = (now - a.start) / 1000;
   const b = a.ball;
   if (tSec < T_CHURN) {
-    /* ---- air on: everything churns; the chosen ball is steered to the floor hole ---- */
+    /* ---- air on: everything churns; the chosen ball is steered to the hatch. Meanwhile the
+       tray shifts and the previous shown ball hops down into slot 0, so the cradle is EMPTY
+       before the new ball is released (they used to land on top of each other). ---- */
     churn = Math.min(1, churn + dt * 3);
     const k = tSec / T_CHURN;
+    shiftTray(clamp01(k / 0.9));
     if (k > 0.5) {
       if (a.phase < 1) { a.phase = 1; a.from = b.position.clone(); }
       const s = easeInOut((k - 0.5) / 0.5);
@@ -406,9 +409,7 @@ function tickDraw(now, dt) {
     b.scale.setScalar(BALL_R + (SHOW_R - BALL_R) * easeInOut(Math.min(1, k * 1.3)));
     b.rotateOnAxis(a.spinAxis, dt * a.spinRate);
     if (k > 0.3) hatchOpen = Math.max(0, hatchOpen - dt * 3);          // lid swings shut behind it
-    // the tray sequence runs across the drop AND the settle (tray hops first, then the old
-    // shown ball hops into the cleared slot), so progress is measured over both phases
-    shiftTray(clamp01(u / (T_DROP + T_SETTLE)));
+    shiftTray(1);                              // the cradle was cleared during the churn
   } else {
     /* ---- settle: spin dies, the number turns to face the room ---- */
     if (a.phase < 3) { a.phase = 3; a.qFrom = b.quaternion.clone(); a.qTo = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -0.08); }
@@ -420,7 +421,7 @@ function tickDraw(now, dt) {
     // keep spinning, slower, then slerp the last part onto the face-on pose
     if (k < 0.5) b.rotateOnAxis(a.spinAxis, dt * a.spinRate * (1 - k * 2));
     if (k >= 0.5) { if (!a.qMid) a.qMid = b.quaternion.clone(); b.quaternion.slerpQuaternions(a.qMid, a.qTo, easeInOut((k - 0.5) * 2)); }
-    shiftTray(clamp01((tSec - T_CHURN) / (T_DROP + T_SETTLE)));
+    shiftTray(1);
     if (tSec >= T_CHURN + T_DROP + T_SETTLE) finishDraw();
   }
 }
@@ -446,8 +447,9 @@ function shiftTray(ts) {
     }
     const from = m.userData.shiftFrom, fromS = m.userData.shiftS;
     const toS = i < 3 ? TRAY_R : TRAY_R * 0.6;
-    // local progress: tray balls go first, the shown ball follows once slot 0 is clear
-    const k = i === 0 ? clamp01((ts - 0.45) / 0.55) : clamp01(ts / 0.55);
+    // local progress over the churn: tray balls go first (0–50 %), the shown ball follows
+    // once slot 0 is clear (40–100 %). All of it finishes before the new ball is released.
+    const k = i === 0 ? clamp01((ts - 0.4) / 0.6) : clamp01(ts / 0.5);
     const e = easeInOut(k);
     m.scale.setScalar(fromS + (toS - fromS) * e);
     m.position.lerpVectors(from, to, e);

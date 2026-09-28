@@ -187,6 +187,8 @@ function attachRoomListener() {
     onPlayersChange: (players) => {
       firebaseSnapshot.players = players;
       renderLobbyUi();
+      // In-game cards carry the OFF badge, so presence changes must redraw them too.
+      if (firebaseSnapshot.meta?.status === 'active' && state) renderPlayersSides();
       if (firebaseSnapshot.meta?.status === 'active') {
         // Player joined/left mid-game — only relevant if ticket exists; no-op here for v1.
       }
@@ -442,6 +444,7 @@ function renderPlayersSides() {
   const right = document.getElementById('tv-players-right');
   if (!left || !right || !state) return;
   const marks = firebaseSnapshot.marks || {};
+  const players = firebaseSnapshot.players || {};
   const total = state.tickets.length;
   const half = Math.ceil(total / 2);
 
@@ -457,11 +460,13 @@ function renderPlayersSides() {
       const total15 = ticket.flat().filter((value) => value > 0).length;
       const struck = (marks[key] || []).filter((number) => state.drawnNumbers.includes(number)).length;
       const uncut = total15 - struck;
+      const offline = players[key]?.connected === false;
       const card = document.createElement('div');
-      card.className = 'tv-player-card';
+      card.className = 'tv-player-card' + (offline ? ' disconnected' : '');
       card.innerHTML = `
         <span class="pc-emoji">${escapeHtml(info.emoji || '😀')}</span>
         <span class="pc-name">${escapeHtml(info.name || 'Player')}</span>
+        ${offline ? '<span class="pc-off" title="Not connected">OFF</span>' : ''}
         <span class="pc-uncut" title="Numbers remaining">${uncut}</span>`;
       el.appendChild(card);
     });
