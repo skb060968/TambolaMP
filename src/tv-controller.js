@@ -539,7 +539,16 @@ async function doDraw() {
   shown.then(async () => {
     try {
       await broadcastDraw(roomCode, result.newState.drawnNumbers, result.number);
-      state = result.newState;
+      // MERGE the draw into the live state rather than replacing it: `result` was derived
+      // from the state ~2 s ago (before the blower animation), and a claim awarded in that
+      // window lives only in the current `state.claims`. Replacing wholesale lost it — the
+      // TV's results then showed a pattern as unclaimed that the phones (reading Firebase)
+      // showed as won.
+      state = {
+        ...state,
+        drawnNumbers: result.newState.drawnNumbers,
+        remainingPool: result.newState.remainingPool,
+      };
       speakNumber(result.number);
       renderCallerUi();
       renderCalledGrid();
@@ -778,10 +787,13 @@ function renderResultsUi() {
   const list = document.getElementById('tv-results-list');
   if (!list || !state) return;
   list.innerHTML = '';
+  // Claims come from Firebase — the same source the phones render from — so the TV can
+  // never disagree with them; the in-memory copy is only a fallback.
+  const claims = firebaseSnapshot.game?.claims || state.claims || {};
   // Track totals per player for the prize summary.
   const totals = {};
   Object.keys(PATTERNS).forEach((p) => {
-    const c = state.claims[p];
+    const c = claims[p];
     const prize = PATTERN_PRIZES[p] || 0;
     const li = document.createElement('li');
     if (c?.won) {
