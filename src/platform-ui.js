@@ -27,9 +27,11 @@ export function showToast(message, durationMs = 1800) {
 
 /**
  * Custom modal confirm. Resolves true on OK, false on Cancel.
+ * Optional `signal` (AbortSignal): aborting closes the modal and resolves false.
  */
-export function confirmModal(title, message, okLabel = 'OK', cancelLabel = 'Cancel') {
+export function confirmModal(title, message, okLabel = 'OK', cancelLabel = 'Cancel', { signal } = {}) {
   return new Promise((resolve) => {
+    if (signal?.aborted) { resolve(false); return; }
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
     overlay.innerHTML = `
@@ -42,12 +44,15 @@ export function confirmModal(title, message, okLabel = 'OK', cancelLabel = 'Canc
         </div>
       </div>`;
     document.body.appendChild(overlay);
+    const close = (value) => {
+      if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+      resolve(value);
+    };
+    signal?.addEventListener('abort', () => close(false), { once: true });
     overlay.addEventListener('click', (e) => {
       const act = e.target.dataset?.act;
-      if (act === 'ok') { document.body.removeChild(overlay); resolve(true); }
-      if (act === 'cancel' || e.target === overlay) {
-        document.body.removeChild(overlay); resolve(false);
-      }
+      if (act === 'ok') close(true);
+      if (act === 'cancel' || e.target === overlay) close(false);
     });
   });
 }

@@ -134,16 +134,19 @@ export async function joinRoomAsPlayer(roomCode, playerName, playerEmoji) {
   let room = await readRoom(code);
   if (!room) return { success: false, reason: 'Room not found' };
   try { assertSchema(room); } catch (error) { return { success: false, reason: error.message }; }
-  if (room.meta?.status !== 'lobby') {
-    return { success: false, reason: room.meta?.status === 'active' ? 'Game already in progress' : 'Room has ended' };
-  }
 
+  // Checked before the status: a player who left mid-round keeps their record (and
+  // ticket), so they can rejoin in any status. The caller resumes non-lobby rooms.
   const existing = Object.keys(room.players || {}).find((key) => room.players[key]?.uid === user.uid);
   if (existing) {
     // The slot is ours (just read from the server): only flip connected back on. A
     // transaction here aborted on its first pass when the local cache was empty.
     await firebaseRetry(() => set(ref(db, `${roomPath(code)}/players/${existing}/connected`), true));
-    return { success: true, playerIndex: playerIndexFrom(existing) };
+    return { success: true, playerIndex: playerIndexFrom(existing), status: room.meta?.status };
+  }
+
+  if (room.meta?.status !== 'lobby') {
+    return { success: false, reason: room.meta?.status === 'active' ? 'Game already in progress' : 'Room has ended' };
   }
 
   for (let index = 0; index < MAX_PLAYERS; index++) {

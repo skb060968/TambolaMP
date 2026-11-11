@@ -752,8 +752,7 @@ async function processClaimRequests(requests) {
       renderPlayersSides();
       if (state.gameOver) {
         stopAutoCall();
-        try { await fbEndGame(roomCode); } catch (_) {}
-        setTimeout(() => handleRoundEnd(), 3500);
+        endRoundAfterFullHouse();
       }
     } catch (error) {
       console.warn('Claim resolution failed:', error.message);
@@ -762,6 +761,32 @@ async function processClaimRequests(requests) {
       _claimsInFlight.delete(requestId);
     }
   }
+}
+
+/** Full House won: end the round in Firebase (with retries), then show the TV results
+    after the winner banner. The TV switches only once the room is 'ended', so it never
+    shows results while the phones are still in the game. */
+async function endRoundAfterFullHouse() {
+  const code = roomCode;
+  const wonAt = Date.now();
+  let ended = false;
+  for (let attempt = 0; attempt < 4 && !ended && roomCode === code; attempt++) {
+    if (attempt > 0) await wait(1000 * attempt);
+    try {
+      const room = await fbEndGame(code);
+      ended = room?.meta?.status === 'ended';
+    } catch (error) {
+      console.warn('endGame failed:', error.message);
+    }
+    if (firebaseSnapshot.meta?.status === 'ended') ended = true;
+  }
+  if (roomCode !== code) return;
+  if (!ended) {
+    showToast('Could not end the round. Press End to try again.', 4000);
+    return;
+  }
+  setTimeout(() => { if (roomCode === code) handleRoundEnd(); },
+    Math.max(0, 3500 - (Date.now() - wonAt)));
 }
 
 /** One retry timer for all failed requests (one per failure multiplied the retries). */

@@ -147,7 +147,12 @@ export async function resumePhoneSession(savedRoomCode, savedPlayerIndex) {
   attachRoomListener();
   if (result.status === 'lobby') showScreen('phone-lobby');
   else if (result.status === 'active') showScreen('phone-game');
-  else { clearSession(); showScreen('home'); return; }
+  else if (result.status === 'ended') {
+    // Refreshed on results: show the same results view as a live round end.
+    _resultsShown = true;
+    renderPhoneResults();
+    showScreen('phone-results');
+  } else { clearSession(); showScreen('home'); return; }
   wirePhoneJoin();
   wirePhoneLobby();
   wirePhoneGame();
@@ -185,6 +190,11 @@ function wirePhoneJoin() {
       roomCode = code;
       playerIndex = result.playerIndex;
       saveSession();
+      if (result.status && result.status !== 'lobby') {
+        // Rejoining our own slot mid-round or on results: restore it like a refresh.
+        await resumePhoneSession(code, result.playerIndex);
+        return;
+      }
       bindPlayerPresence();
       attachRoomListener();
       showScreen('phone-lobby');
@@ -457,7 +467,7 @@ function wirePhoneGame() {
 
   const leave = document.getElementById('btn-phone-game-leave');
   if (leave) leave.addEventListener('click', async () => {
-    const ok = await confirmModal('Leave the game?', 'You cannot rejoin this round.', 'Leave', 'Stay');
+    const ok = await confirmModal('Leave the game?', 'You can rejoin with the room code.', 'Leave', 'Stay');
     if (ok) await leavePhoneRoom();
   });
 
@@ -708,11 +718,13 @@ function renderPhoneResults() {
     }
   }
 
-  // Reset Play Again button state for this round.
+  // Reset Play Again button state for this round (kept as Ready if this player already
+  // pressed it before a refresh).
   const again = document.getElementById('btn-phone-play-again');
   if (again) {
-    again.disabled = false;
-    again.textContent = '▶ Play Again';
+    const alreadyReady = (firebaseSnapshot.ready || {})[`player_${playerIndex}`] === true;
+    again.disabled = alreadyReady;
+    again.textContent = alreadyReady ? '✓ Ready' : '▶ Play Again';
   }
 
   renderPhoneReadyIndicators();
@@ -779,6 +791,7 @@ async function leavePhoneRoom() {
 const HOST_OFFLINE_NOTICE_MS = 20000;
 let _hostOfflineTimer = null;
 let _hostOfflineNoticeShown = false;
+let _hostOfflineModal = null; // AbortController that closes the open notice
 
 function watchHostPresence(meta) {
   if (meta?.host?.connected === false) {
@@ -793,14 +806,20 @@ function watchHostPresence(meta) {
 function clearHostOfflineWatch() {
   if (_hostOfflineTimer !== null) { clearTimeout(_hostOfflineTimer); _hostOfflineTimer = null; }
   _hostOfflineNoticeShown = false;
+  // The TV is back (or we left): close the notice if it is still open.
+  if (_hostOfflineModal) { _hostOfflineModal.abort(); _hostOfflineModal = null; }
 }
 
 async function showHostOfflineNotice() {
   _hostOfflineTimer = null;
   if (roomCode == null || firebaseSnapshot.meta?.host?.connected !== false) return;
   _hostOfflineNoticeShown = true;
+  const controller = new AbortController();
+  _hostOfflineModal = controller;
   const leave = await confirmModal('The host (TV) went offline',
-    'Wait for the TV to come back, or leave the room.', '← Leave', 'Wait');
+    'Wait for the TV to come back, or leave the room.', '← Leave', 'Wait',
+    { signal: controller.signal });
+  if (_hostOfflineModal === controller) _hostOfflineModal = null;
   if (leave && roomCode != null) await leavePhoneRoom();
 }
 
