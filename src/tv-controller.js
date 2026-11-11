@@ -24,6 +24,7 @@ import {
   rejoinRoom,
   removePlayer,
   comparePlayerKeys,
+  serverNow,
   MAX_PLAYERS,
 } from './firebase-sync.js';
 import { generateTickets } from './ticket-generator.js';
@@ -61,6 +62,8 @@ let firebaseSnapshot = {};       // most recent room snapshot for cross-referenc
 let _autoCallTimer = null;
 let _drawPending = false;
 let _processedRequests = new Set();
+let _claimsInFlight = new Set();   // requests being resolved right now (overlapping calls skip them)
+let _claimRetryTimer = null;       // single retry timer for failed resolutions
 let _resultsShown = false;
 
 /* Lobby presence: a dropped player lingers briefly with the OFFLINE treatment,
@@ -138,6 +141,14 @@ export async function resumeTvSession(savedRoomCode) {
     _resultsShown = false;
     showScreen('tv-game');
     setupGameUi();
+  } else if (result.status === 'ended' && snapshot) {
+    // Refreshed on the results screen: rebuild the round from its tickets (players who
+    // pressed Home have already left) and show the results so Play Again still works.
+    playerKeysSorted = Object.keys(snapshot.tickets || {}).sort(comparePlayerKeys);
+    state = reconstructFromFirebase(snapshot, playerKeysSorted);
+    _processedRequests = new Set();
+    _resultsShown = false;
+    handleRoundEnd();
   } else {
     clearSession();
     showScreen('home');
@@ -359,7 +370,8 @@ function wireTvLobby() {
 
   const shareBtn = document.getElementById('btn-tv-share-code');
   if (shareBtn) {
-    shareBtn.addEventListener('click', createShareHandler(roomCode, 'Tambola MP'));
+    // Read the code at click time: the button is wired before the room exists.
+    shareBtn.addEventListener('click', () => createShareHandler(roomCode, 'Tambola MP')());
   }
   
   const qrBtn = document.getElementById('btn-tv-qr-code');
@@ -496,7 +508,10 @@ function wireTvGame() {
       stopAutoCall();
       startAutoCall(parseInt(speedSel.value, 10));
     }
-    fbSetAutoCallSpeed(roomCode, parseInt(speedSel.value, 10));
+    fbSetAutoCallSpeed(roomCode, parseInt(speedSel.value, 10)).catch((error) => {
+      console.warn('setAutoCallSpeed failed:', error.message);
+      showToast('Auto-call speed was not saved.');
+    });
   });
 
   const endBtn = document.getElementById('btn-tv-end');
@@ -504,7 +519,16 @@ function wireTvGame() {
     const ok = await confirmModal('End round?', 'Show final results.', 'End', 'Cancel');
     if (!ok) return;
     stopAutoCall();
-    await fbEndGame(roomCode);
+    try {
+      await fbEndGame(roomCode);
+    } catch (error) {
+      // Already ended (e.g. Full House just won): the phones are on results too.
+      if (firebaseSnapshot.meta?.status !== 'ended') {
+        console.warn('endGame failed:', error.message);
+        showToast('Could not end the round. Please try again.');
+        return;
+      }
+    }
     handleRoundEnd();
   });
 
@@ -591,11 +615,25 @@ function toggleAutoCall() {
 function startAutoCall(seconds) {
   stopAutoCall();
   _autoCallTimer = setInterval(() => {
+    // Nobody left to play: stop drawing (the button shows ▶ Auto Call); the host resumes it.
+    if (!anyRoundPlayerConnected()) {
+      stopAutoCall();
+      showToast('No players connected. Auto call paused.', 2400);
+      return;
+    }
     doDraw();
   }, seconds * 1000);
   const btn = document.getElementById('btn-tv-auto');
   if (btn) { btn.textContent = '⏸ Pause Auto'; btn.classList.add('active'); }
-  fbSetPaused(roomCode, false);
+  fbSetPaused(roomCode, false).catch((error) => {
+    console.warn('setPaused failed:', error.message);
+    showToast('Auto-call state was not saved.');
+  });
+}
+
+function anyRoundPlayerConnected() {
+  const players = firebaseSnapshot.players || {};
+  return (state?.playerKeys || []).some((key) => players[key] && players[key].connected !== false);
 }
 
 function stopAutoCall() {
@@ -657,13 +695,25 @@ function animateBall(number) {
 
 /* ======= CLAIMS ======= */
 async function processClaimRequests(requests) {
-  if (!state || !roomCode) return;
+  if (!roomCode) return;
+  const status = firebaseSnapshot.meta?.status;
+  if (status !== 'active' && status !== 'ended') return;
+  if (status === 'active' && !state) return;
   for (const requestId of Object.keys(requests || {})) {
-    if (_processedRequests.has(requestId)) continue;
+    if (_processedRequests.has(requestId) || _claimsInFlight.has(requestId)) continue;
     const request = requests[requestId];
     if (!request) continue;
 
+    _claimsInFlight.add(requestId);
     try {
+      // Round over (ended, or Full House just won): reject what is left so it
+      // doesn't stay pending or retry forever.
+      if (firebaseSnapshot.meta?.status !== 'active' || !state || state.gameOver) {
+        await resolveClaimRequest(roomCode, requestId, { valid: false, reason: 'Round has ended' });
+        _processedRequests.add(requestId);
+        continue;
+      }
+
       const playerKey = request.playerKey || `player_${request.playerIndex}`;
       const stateArrayIndex = state.playerKeys.indexOf(playerKey);
       const player = firebaseSnapshot.players?.[playerKey];
@@ -686,7 +736,7 @@ async function processClaimRequests(requests) {
 
       const playerInfo = state.playerInfos[stateArrayIndex] || { name: 'Player', emoji: '😀' };
       const winner = Number.parseInt(playerKey.replace('player_', ''), 10);
-      const wonAt = Date.now();
+      const wonAt = serverNow();
       await resolveClaimRequest(roomCode, requestId, {
         valid: true,
         winner,
@@ -707,9 +757,20 @@ async function processClaimRequests(requests) {
       }
     } catch (error) {
       console.warn('Claim resolution failed:', error.message);
-      setTimeout(() => processClaimRequests(firebaseSnapshot.claimRequests || {}), 1000);
+      scheduleClaimRetry();
+    } finally {
+      _claimsInFlight.delete(requestId);
     }
   }
+}
+
+/** One retry timer for all failed requests (one per failure multiplied the retries). */
+function scheduleClaimRetry() {
+  if (_claimRetryTimer !== null) return;
+  _claimRetryTimer = setTimeout(() => {
+    _claimRetryTimer = null;
+    processClaimRequests(firebaseSnapshot.claimRequests || {});
+  }, 1000);
 }
 
 function showWinnerBanner(playerInfo, pattern) {
@@ -837,7 +898,16 @@ function wireTvResults() {
   const close = document.getElementById('btn-tv-close-room');
   if (again) again.addEventListener('click', async () => {
     if (!roomCode) return;
-    await fbResetRoom(roomCode);
+    try {
+      await fbResetRoom(roomCode);
+    } catch (error) {
+      // Stay on results unless the room is already back in the lobby.
+      if (firebaseSnapshot.meta?.status !== 'lobby') {
+        console.warn('resetRoom failed:', error.message);
+        showToast('Could not start a new round. Please try again.');
+        return;
+      }
+    }
     state = null;
     _resultsShown = false;
     _processedRequests = new Set();

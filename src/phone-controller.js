@@ -10,7 +10,7 @@
 
 import {
   joinRoomAsPlayer, listenRoom, setupPlayerDisconnectHandler,
-  writePlayerMarks, submitClaimRequest, leaveRoom, setReady,
+  writePlayerMarks, submitClaimRequest, leaveRoom, setReady, markPlayerOffline,
   rejoinRoom, comparePlayerKeys, MAX_PLAYERS,
 } from './firebase-sync.js';
 import { deserializeTicket } from './ticket-generator.js';
@@ -18,7 +18,7 @@ import { PATTERNS, PATTERN_LABELS } from './claim-validator.js';
 import {
   initAudio, playSound, speakNumber, isMuted, toggleMute,
 } from './sound-manager.js';
-import { showScreen, showToast } from './platform-ui.js';
+import { showScreen, showToast, confirmModal } from './platform-ui.js';
 import { authReady } from './firebase-config.js';
 import { mountVoiceChat } from './voice-chat-widget.js';
 
@@ -206,6 +206,7 @@ function attachRoomListener() {
   unsubscribe = listenRoom(roomCode, {
     onMetaChange: (meta) => {
       firebaseSnapshot.meta = meta;
+      watchHostPresence(meta);
       if (meta.status === 'lobby') {
         // Returned to lobby (e.g. after Play Again)
         // Reset round-local state
@@ -214,6 +215,7 @@ function attachRoomListener() {
         calledSet = new Set();
         lastCalled = null;
         _resultsShown = false;
+        _claimRequestsAwaiting = new Map();
         _bannersShown.clear();
         // Reset Play Again + claim buttons
         const again = document.getElementById('btn-phone-play-again');
@@ -224,6 +226,8 @@ function attachRoomListener() {
       } else if (meta.status === 'active') {
         if (myTicket) showScreen('phone-game');
       } else if (meta.status === 'ended') {
+        // A claim pending at round end must not block that pattern next round.
+        _claimRequestsAwaiting = new Map();
         if (!_resultsShown) {
           _resultsShown = true;
           renderPhoneResults();
@@ -449,6 +453,12 @@ function wirePhoneGame() {
   // Claim buttons (5)
   document.querySelectorAll('.claim-btn').forEach((btn) => {
     btn.addEventListener('click', () => handleClaim(btn.dataset.pattern));
+  });
+
+  const leave = document.getElementById('btn-phone-game-leave');
+  if (leave) leave.addEventListener('click', async () => {
+    const ok = await confirmModal('Leave the game?', 'You cannot rejoin this round.', 'Leave', 'Stay');
+    if (ok) await leavePhoneRoom();
   });
 
   // Optional voice chat (players only; host uses the TV screen).
@@ -748,8 +758,55 @@ function renderPhoneReadyIndicators() {
   });
 }
 
+/* ======= LEAVE / HOST OFFLINE ======= */
+/** Leave from any screen. During an active round the record (with its ticket) must
+    stay, so the player is only marked offline; otherwise the usual leave. */
+async function leavePhoneRoom() {
+  if (roomCode != null && playerIndex != null) {
+    const status = firebaseSnapshot.meta?.status;
+    if (status === 'active') {
+      try { await markPlayerOffline(roomCode, playerIndex); } catch (_) {}
+    } else {
+      if (status === 'ended') {
+        try { await setReady(roomCode, playerIndex, 'left'); } catch (_) {}
+      }
+      try { await leaveRoom(roomCode, playerIndex); } catch (_) {}
+    }
+  }
+  cleanupAndGoHome();
+}
+
+const HOST_OFFLINE_NOTICE_MS = 20000;
+let _hostOfflineTimer = null;
+let _hostOfflineNoticeShown = false;
+
+function watchHostPresence(meta) {
+  if (meta?.host?.connected === false) {
+    if (_hostOfflineTimer === null && !_hostOfflineNoticeShown) {
+      _hostOfflineTimer = setTimeout(showHostOfflineNotice, HOST_OFFLINE_NOTICE_MS);
+    }
+  } else {
+    clearHostOfflineWatch();
+  }
+}
+
+function clearHostOfflineWatch() {
+  if (_hostOfflineTimer !== null) { clearTimeout(_hostOfflineTimer); _hostOfflineTimer = null; }
+  _hostOfflineNoticeShown = false;
+}
+
+async function showHostOfflineNotice() {
+  _hostOfflineTimer = null;
+  if (roomCode == null || firebaseSnapshot.meta?.host?.connected !== false) return;
+  _hostOfflineNoticeShown = true;
+  const leave = await confirmModal('The host (TV) went offline',
+    'Wait for the TV to come back, or leave the room.', '← Leave', 'Wait');
+  if (leave && roomCode != null) await leavePhoneRoom();
+}
+
 /* ======= CLEANUP ======= */
 function cleanupAndGoHome() {
+  clearHostOfflineWatch();
   if (voiceWidget) { try { voiceWidget.stop(); } catch (_) {} }
   if (unsubscribe) { unsubscribe(); unsubscribe = null; }
   clearPlayerPresence();

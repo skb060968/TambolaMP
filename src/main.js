@@ -41,6 +41,16 @@ async function init() {
     return;
   }
 
+  // Wire the home screen buttons first: a deep link returns early below, and the
+  // Back button on the join screen leads to this home screen.
+  const btnTv = document.getElementById('btn-home-tv');
+  const btnPlayer = document.getElementById('btn-home-player');
+  if (btnTv) btnTv.addEventListener('click', () => startTvFlow());
+  if (btnPlayer) btnPlayer.addEventListener('click', () => {
+    const code = getQueryParam('code');
+    startPhoneFlow(code);
+  });
+
   // Check for deep link with room code
   const deepLinkRoomCode = initDeepLinkHandler({
     roomInputId: 'phone-join-code',
@@ -53,15 +63,6 @@ async function init() {
     startPhoneFlow(deepLinkRoomCode);
     return;
   }
-  
-  // Wire the home screen buttons.
-  const btnTv = document.getElementById('btn-home-tv');
-  const btnPlayer = document.getElementById('btn-home-player');
-  if (btnTv) btnTv.addEventListener('click', () => startTvFlow());
-  if (btnPlayer) btnPlayer.addEventListener('click', () => {
-    const code = getQueryParam('code');
-    startPhoneFlow(code);
-  });
 
   // Legacy support: If a code is present in the URL with action=join
   const queryCode = getQueryParam('code');

@@ -17,7 +17,19 @@ const TRANSIENT_CODES = new Set([
 ]);
 export const MAX_PLAYERS = 20;
 
-const now = () => Date.now();
+/* Server-corrected clock: the rules compare timestamps with the server's `now`, so a
+   phone whose clock is off would be rejected. The offset listener starts at module load,
+   and requireUser() waits briefly for its first value before any write. */
+let serverOffsetMs = 0;
+let resolveClockReady;
+const clockReady = new Promise((resolve) => { resolveClockReady = resolve; });
+onValue(ref(db, '.info/serverTimeOffset'), (snap) => {
+  const value = snap.val();
+  if (Number.isFinite(value)) serverOffsetMs = value;
+  resolveClockReady();
+});
+export const serverNow = () => Math.round(Date.now() + serverOffsetMs);
+const now = serverNow;
 const roomPath = (code) => `${ROOM_PATH}/${normalizeRoomCode(code)}`;
 const playerKeyFor = (index) => `player_${index}`;
 const playerIndexFrom = (key) => Number.parseInt(key.replace('player_', ''), 10);
@@ -40,6 +52,7 @@ function cleanText(value, fallback, maxLength = 14) {
 async function requireUser() {
   const user = await authReady;
   if (!user?.uid || auth.currentUser?.uid !== user.uid) throw new Error('Authentication unavailable');
+  await Promise.race([clockReady, new Promise((resolve) => setTimeout(resolve, 1500))]);
   return user;
 }
 function isTransient(error) {
@@ -127,12 +140,10 @@ export async function joinRoomAsPlayer(roomCode, playerName, playerEmoji) {
 
   const existing = Object.keys(room.players || {}).find((key) => room.players[key]?.uid === user.uid);
   if (existing) {
-    const index = playerIndexFrom(existing);
-    const result = await runTransaction(ref(db, `${roomPath(code)}/players/${existing}`), (player) => {
-      if (!player || player.uid !== user.uid) return undefined;
-      return { ...player, connected: true };
-    }, { applyLocally: false });
-    if (result.committed) return { success: true, playerIndex: index };
+    // The slot is ours (just read from the server): only flip connected back on. A
+    // transaction here aborted on its first pass when the local cache was empty.
+    await firebaseRetry(() => set(ref(db, `${roomPath(code)}/players/${existing}/connected`), true));
+    return { success: true, playerIndex: playerIndexFrom(existing) };
   }
 
   for (let index = 0; index < MAX_PLAYERS; index++) {
@@ -210,7 +221,8 @@ async function hostTransaction(roomCode, mutate) {
     const previousRevision = room.game?.revision || 0;
     const changed = mutate(room);
     if (!changed) return undefined;
-    changed.meta.updatedAt = now();
+    // Never move updatedAt backwards (the rules require it to grow).
+    changed.meta.updatedAt = Math.max(now(), Number(room.meta?.updatedAt) || 0);
     changed.game.revision = previousRevision + 1;
     return changed;
   }, { applyLocally: false }));
@@ -245,10 +257,14 @@ export async function startGame(roomCode, tickets, expectedPlayerKeys = null) {
   }
   const room = await hostTransaction(roomCode, (current) => {
     if (current.meta.status !== 'lobby') return undefined;
-    const keys = Object.keys(current.players || {}).filter((key) => PLAYER_KEY_RE.test(key)).sort(comparePlayerKeys);
+    const allKeys = Object.keys(current.players || {}).filter((key) => PLAYER_KEY_RE.test(key));
+    // Tickets go to the connected players; offline player records are removed in the
+    // same write (the TV hides them from the lobby, so the host cannot remove them).
+    const keys = allKeys.filter((key) => current.players[key]?.connected !== false).sort(comparePlayerKeys);
     const expected = expectedPlayerKeys ? [...expectedPlayerKeys].sort(comparePlayerKeys) : keys;
     if (keys.length !== tickets.length || keys.length !== expected.length ||
         keys.some((key, index) => key !== expected[index])) return undefined;
+    allKeys.forEach((key) => { if (!keys.includes(key)) delete current.players[key]; });
     current.tickets = Object.fromEntries(keys.map((key, index) => [key, serializeTicket(tickets[index])]));
     current.marks = {};
     current.claimRequests = {};
@@ -343,7 +359,10 @@ export async function clearClaimRequest(roomCode, requestId) {
 export async function resolveClaimRequest(roomCode, requestId, resolution) {
   return hostTransaction(roomCode, (room) => {
     const request = room.claimRequests?.[requestId];
-    if (!request || room.meta.status !== 'active') return undefined;
+    if (!request) return undefined;
+    // Wins only while the round is active; leftover requests may still be rejected
+    // after the round has ended so they don't stay pending.
+    if (room.meta.status !== 'active' && !(room.meta.status === 'ended' && !resolution.valid)) return undefined;
     room.claimResults ||= {};
     if (resolution.valid) {
       const pattern = request.pattern;
@@ -415,6 +434,13 @@ export async function leaveRoom(roomCode, playerIndex) {
   const connectedRef = ref(db, `${roomPath(code)}/players/${key}/connected`);
   try { await onDisconnect(connectedRef).cancel(); } catch (_) {}
   await firebaseRetry(() => remove(ref(db, `${roomPath(code)}/players/${key}`)));
+}
+
+/** Leaving during an active round: the record must stay (it holds a ticket), so the
+    player is only marked offline. */
+export async function markPlayerOffline(roomCode, playerIndex) {
+  const { code, key } = await ownedPlayer(roomCode, playerIndex);
+  await firebaseRetry(() => set(ref(db, `${roomPath(code)}/players/${key}/connected`), false));
 }
 
 export async function removePlayer(roomCode, playerIndex) {
